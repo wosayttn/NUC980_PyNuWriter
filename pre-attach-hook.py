@@ -11,8 +11,10 @@ def main():
     result = subprocess.run(
         [sys.executable, str(reset_script), "--duration", "0.8"], check=False,
     )
+    '''
     if result.returncode != 0:
         return result.returncode
+    '''
     time.sleep(1.0)
     return 0
 

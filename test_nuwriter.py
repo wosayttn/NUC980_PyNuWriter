@@ -118,6 +118,35 @@ class PreAttachHookTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    def test_chunk_progress_updates_in_ten_percent_steps(self):
+        device = Mock()
+        lengths = [4096, 4096, 4096, 1]
+        device.write.side_effect = lengths
+        device.read.side_effect = [struct.pack("<I", length) for length in lengths]
+        output = io.StringIO()
+        with patch.object(nuwriter.sys, "stdout", output):
+            nuwriter.UsbTransport(device).send_chunks(bytes(sum(lengths)))
+        frames = [frame for frame in output.getvalue().split("\r") if "%" in frame]
+        percentages = [int(frame.rsplit(None, 1)[-1].rstrip("%")) for frame in frames]
+        self.assertEqual(percentages, list(range(0, 101, 10)))
+        self.assertIn("Download [##########] 100%", output.getvalue())
+        self.assertTrue(output.getvalue().endswith("\n"))
+        self.assertEqual(device.write.call_count, len(lengths))
+        self.assertEqual(device.read.call_count, len(lengths))
+
+    def test_chunk_progress_does_not_complete_after_a_failed_ack(self):
+        device = Mock()
+        device.write.return_value = 4096
+        device.read.side_effect = [struct.pack("<I", 4096), OSError("acknowledgement failed")]
+        output = io.StringIO()
+        with patch.object(nuwriter.sys, "stdout", output):
+            with self.assertRaises(OSError):
+                nuwriter.UsbTransport(device).send_chunks(bytes(8192))
+        self.assertIn("50%", output.getvalue())
+        self.assertNotIn("60%", output.getvalue())
+        self.assertNotIn("100%", output.getvalue())
+        self.assertTrue(output.getvalue().endswith("\n"))
+
     def test_trace_records_header_transfer_and_reply_without_changing_usb_calls(self):
         device = Mock()
         device.write.return_value = 56
@@ -219,6 +248,122 @@ class TransportTests(unittest.TestCase):
         device.read.side_effect = [struct.pack("<I", 4096), struct.pack("<I", 1)]
         nuwriter.UsbTransport(device).send_chunks(bytes(4097))
         self.assertEqual(device.write.call_args_list[1].args, (0x02, bytes(1)))
+
+
+class TransferProgressTests(unittest.TestCase):
+    def assert_progress(self, output, label):
+        frames = [frame for frame in output.getvalue().split("\r") if label in frame]
+        percentages = [int(frame.rsplit(None, 1)[-1].rstrip("%")) for frame in frames]
+        self.assertEqual(percentages, list(range(0, 101, 10)))
+        self.assertTrue(output.getvalue().endswith("\n"))
+
+    def test_sdram_progress_for_tiny_full_partial_and_multiple_chunks(self):
+        for length in (1, 4096, 4097, 40961):
+            with self.subTest(length=length):
+                transport = Mock()
+                transport.read_word.return_value = 0x80
+                output = io.StringIO()
+                with patch.object(nuwriter.sys, "stdout", output):
+                    writer = nuwriter.Nuc980Writer(fixture_config(), transport)
+                    writer.download(bytes(length), 0x8000, True, 0)
+                self.assert_progress(output, "SDRAM download 0x00008000")
+                self.assertEqual(transport.expect.call_count, (length + 4095) // 4096)
+                self.assertEqual(transport.write.call_args_list[-1].args, (bytes((length - 1) % 4096 + 1),))
+
+    def test_each_sdram_download_starts_a_new_progress_bar(self):
+        transport = Mock()
+        transport.read_word.return_value = 0x80
+        output = io.StringIO()
+        with patch.object(nuwriter.sys, "stdout", output):
+            writer = nuwriter.Nuc980Writer(fixture_config(), transport)
+            writer.download(b"dtb", 0x1400000, False, 0)
+            writer.download(b"kernel", 0x8000, True, 0x81400000)
+        self.assert_progress(output, "SDRAM download 0x01400000")
+        self.assert_progress(output, "SDRAM download 0x00008000")
+
+    def test_program_progress_waits_for_completion_for_each_media_and_image_kind(self):
+        for mode in ("NAND", "SPINAND", "SPINOR", "SD"):
+            for kind in (0, 2):
+                with self.subTest(mode=mode, kind=kind):
+                    config = fixture_config()
+                    config.mode = mode
+                    output = io.StringIO()
+                    snapshots = []
+                    transport = Mock()
+                    def acknowledge():
+                        snapshots.append(output.getvalue())
+                        return 100
+                    transport.read_word.side_effect = acknowledge
+                    data = bytes(65537)
+                    prepared = nuwriter.PreparedImage(nuwriter.Image(Path("image.bin"), kind, 0x200, 0), data, len(data))
+                    with patch.object(nuwriter.sys, "stdout", output):
+                        nuwriter.Nuc980Writer(config, transport).program(prepared)
+                    self.assert_progress(output, f"{mode} program")
+                    self.assertTrue(all("100%" not in text for text in snapshots))
+                    self.assertEqual(transport.expect.call_count, 17)
+
+    def test_pack_progress_covers_all_children_without_restarting(self):
+        first = struct.pack("<4I", 65536, 0, 0, 0xFFFFFFFF) + bytes(65536)
+        second = struct.pack("<4I", 4097, 0x20000, 0, 0xFFFFFFFF) + bytes(4097)
+        data = struct.pack("<4I", 5, 65536 + 4097, 2, 0xFFFFFFFF) + first + second
+        prepared = nuwriter.PreparedImage(nuwriter.Image(Path("pack.bin"), 3, 0, 0), data, len(data))
+        for mode in ("NAND", "SPINAND", "SPINOR", "SD"):
+            with self.subTest(mode=mode):
+                config = fixture_config()
+                config.mode = mode
+                transport = Mock()
+                output = io.StringIO()
+                snapshots = []
+                def acknowledge():
+                    snapshots.append(output.getvalue())
+                    return 100
+                transport.read_word.side_effect = acknowledge
+                with patch.object(nuwriter.sys, "stdout", output):
+                    nuwriter.Nuc980Writer(config, transport).program_pack(prepared)
+                self.assert_progress(output, f"{mode} pack program")
+                self.assertTrue(all("100%" not in text for text in snapshots))
+                self.assertEqual(transport.write.call_count, 22)
+
+    def test_progress_does_not_complete_after_transfer_or_final_status_errors(self):
+        data = b"payload"
+        single = nuwriter.PreparedImage(nuwriter.Image(Path("image.bin"), 0, 0, 0), data, len(data))
+        pack = struct.pack("<4I", 5, len(data), 1, 0xFFFFFFFF) + struct.pack("<4I", len(data), 0, 0, 0xFFFFFFFF) + data
+        packed = nuwriter.PreparedImage(nuwriter.Image(Path("pack.bin"), 3, 0, 0), pack, len(pack))
+        for operation in ("download", "program", "program_pack"):
+            with self.subTest(operation=operation):
+                transport = Mock()
+                if operation == "download":
+                    transport.read_word.return_value = 0x80
+                    transport.expect.side_effect = OSError("data acknowledgement failed")
+                else:
+                    replies = [0] if operation == "program" else [0, 0, 0, len(data)]
+                    transport.read_word.side_effect = replies + [OSError("completion failed")]
+                output = io.StringIO()
+                writer = nuwriter.Nuc980Writer(fixture_config(), transport)
+                with patch.object(nuwriter.sys, "stdout", output):
+                    with self.assertRaises((OSError, nuwriter.NuWriterError)):
+                        if operation == "download":
+                            writer.download(data, 0x8000, False, 0)
+                        elif operation == "program":
+                            writer.program(single)
+                        else:
+                            writer.program_pack(packed)
+                self.assertNotIn("100%", output.getvalue())
+                self.assertTrue(output.getvalue().endswith("\n"))
+
+    def test_program_verify_progress_does_not_complete_after_verification_failure(self):
+        config = fixture_config()
+        config.operation = "program_verify"
+        transport = Mock()
+        prepared = nuwriter.PreparedImage(nuwriter.Image(Path("image.bin"), 0, 0, 0), b"data", 4)
+        writer = nuwriter.Nuc980Writer(config, transport)
+        output = io.StringIO()
+        with patch.object(nuwriter.sys, "stdout", output), \
+             patch.object(writer, "verify_data", side_effect=nuwriter.NuWriterError("Verification failed")):
+            with self.assertRaisesRegex(nuwriter.NuWriterError, "Verification failed"):
+                writer.program(prepared)
+        self.assertIn("90%", output.getvalue())
+        self.assertNotIn("100%", output.getvalue())
 
 
 class InitializationTests(unittest.TestCase):

@@ -58,6 +58,36 @@ class NuWriterError(Exception):
     pass
 
 
+class TransferProgress:
+    def __init__(self, label, total):
+        self.label = label
+        self.total = total
+        self.percent = -10
+
+    def __enter__(self):
+        self.update(0)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.percent < 100:
+            print(flush=True)
+
+    def update(self, completed):
+        percent = min(90, completed * 100 // self.total) if self.total else 0
+        self.show(percent)
+
+    def complete(self):
+        self.show(100)
+
+    def show(self, percent):
+        while self.percent + 10 <= percent:
+            self.percent += 10
+            blocks = self.percent // 10
+            bar = "#" * blocks + "-" * (10 - blocks)
+            print(f"\r{self.label} [{bar}] {self.percent:3d}%",
+                  end="\n" if self.percent == 100 else "", flush=True)
+
+
 class UsbTransport:
     def __init__(self, device, timeout=10000, trace=False):
         self.device = device
@@ -131,10 +161,13 @@ class UsbTransport:
                 )
 
     def send_chunks(self, data):
-        for offset in range(0, len(data), TRANSFER_SIZE):
-            chunk = data[offset:offset + TRANSFER_SIZE]
-            self.write(chunk)
-            self.expect(len(chunk))
+        with TransferProgress("Download", len(data)) as progress:
+            for offset in range(0, len(data), TRANSFER_SIZE):
+                chunk = data[offset:offset + TRANSFER_SIZE]
+                self.write(chunk)
+                self.expect(len(chunk))
+                progress.update(offset + len(chunk))
+            progress.complete()
 
 
 @dataclass
@@ -856,25 +889,28 @@ class Nuc980Writer:
         values = dict(file_length=prepared.file_length, kind=image.kind, execute=execute,
                       offset=offset, init_size=prepared.init_size, number=number)
         self.command(self.header(0, **values))
-        for position in range(0, len(prepared.data), TRANSFER_SIZE):
-            chunk = prepared.data[position:position + TRANSFER_SIZE]
-            self.transport.write(chunk)
-            self.transport.expect(len(chunk))
-            if self.config.mode == "SPINOR" and image.kind != 2 and (position + len(chunk)) % 0x10000 == 0:
+        with TransferProgress(f"{self.config.mode} program", len(prepared.data)) as progress:
+            for position in range(0, len(prepared.data), TRANSFER_SIZE):
+                chunk = prepared.data[position:position + TRANSFER_SIZE]
+                self.transport.write(chunk)
+                self.transport.expect(len(chunk))
+                if self.config.mode == "SPINOR" and image.kind != 2 and (position + len(chunk)) % 0x10000 == 0:
+                    self.transport.read_word()
+                progress.update(position + len(chunk))
+            if self.config.mode == "SPINOR":
+                if image.kind == 2:
+                    self.wait_progress()
+                elif len(prepared.data) % 0x10000:
+                    self.transport.read_word()
+            else:
                 self.transport.read_word()
-        if self.config.mode == "SPINOR":
-            if image.kind == 2:
-                self.wait_progress()
-            elif len(prepared.data) % 0x10000:
-                self.transport.read_word()
-        else:
-            self.transport.read_word()
-        if self.config.operation == "program_verify":
-            self.command(self.header(3, **values))
-            expected = prepared.data[prepared.init_size:]
-            if image.kind == 2 and self.config.mode == "SD":
-                expected = expected[:-32]
-            self.verify_data(expected)
+            if self.config.operation == "program_verify":
+                self.command(self.header(3, **values))
+                expected = prepared.data[prepared.init_size:]
+                if image.kind == 2 and self.config.mode == "SD":
+                    expected = expected[:-32]
+                self.verify_data(expected)
+            progress.complete()
 
     def verify_data(self, expected):
         for offset in range(0, len(expected), TRANSFER_SIZE):
@@ -1013,12 +1049,15 @@ class Nuc980Writer:
             acknowledgement = self.transport.read_word()
             if acknowledgement != 0x80:
                 raise NuWriterError(f"Unexpected SDRAM ACK: 0x{acknowledgement:08x}, expected 0x00000080")
-            for position in range(0, len(data), TRANSFER_SIZE):
-                chunk = data[position:position + TRANSFER_SIZE]
-                stage = f"data transmission at offset 0x{position:x} ({len(chunk)} bytes)"
-                self.transport.write(chunk)
-                stage = f"data acknowledgement at offset 0x{position:x} ({len(chunk)} bytes)"
-                self.transport.expect(len(chunk))
+            with TransferProgress(f"SDRAM download 0x{address:08x}", len(data)) as progress:
+                for position in range(0, len(data), TRANSFER_SIZE):
+                    chunk = data[position:position + TRANSFER_SIZE]
+                    stage = f"data transmission at offset 0x{position:x} ({len(chunk)} bytes)"
+                    self.transport.write(chunk)
+                    stage = f"data acknowledgement at offset 0x{position:x} ({len(chunk)} bytes)"
+                    self.transport.expect(len(chunk))
+                    progress.update(position + len(chunk))
+                progress.complete()
         except (OSError, NuWriterError) as error:
             raise NuWriterError(f"SDRAM download at 0x{address:08x}: {stage} failed: {error}") from error
 
@@ -1028,20 +1067,26 @@ class Nuc980Writer:
         self.command(self.header(5, file_length=len(data), kind=3))
         self.transport.write(data[:16])
         self.transport.read_word()
-        for header, payload, kind in children:
-            self.transport.write(header)
-            if self.config.mode in {"NAND", "SD", "SPINAND"}:
-                self.transport.read_word()
-            for position in range(0, len(payload), TRANSFER_SIZE):
-                chunk = payload[position:position + TRANSFER_SIZE]
-                self.transport.write(chunk)
-                self.transport.read_word()
-                if self.config.mode == "SPINOR" and len(chunk) == TRANSFER_SIZE and (position + len(chunk)) % 0x10000 == 0:
+        total = sum(len(payload) for header, payload, kind in children)
+        completed = 0
+        with TransferProgress(f"{self.config.mode} pack program", total) as progress:
+            for header, payload, kind in children:
+                self.transport.write(header)
+                if self.config.mode in {"NAND", "SD", "SPINAND"}:
                     self.transport.read_word()
-            if self.config.mode in {"NAND", "SD", "SPINAND"}:
-                self.transport.read_word()
-            elif self.config.mode == "SPINOR" and len(payload) % 0x10000:
-                self.wait_progress()
+                for position in range(0, len(payload), TRANSFER_SIZE):
+                    chunk = payload[position:position + TRANSFER_SIZE]
+                    self.transport.write(chunk)
+                    self.transport.read_word()
+                    if self.config.mode == "SPINOR" and len(chunk) == TRANSFER_SIZE and (position + len(chunk)) % 0x10000 == 0:
+                        self.transport.read_word()
+                    completed += len(chunk)
+                    progress.update(completed)
+                if self.config.mode in {"NAND", "SD", "SPINAND"}:
+                    self.transport.read_word()
+                elif self.config.mode == "SPINOR" and len(payload) % 0x10000:
+                    self.wait_progress()
+            progress.complete()
 
     def run(self, prepared):
         if self.config.operation == "attach":
