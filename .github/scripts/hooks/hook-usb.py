@@ -1,0 +1,1 @@
+hiddenimports = ["glob", "usb.core", "usb.util", "usb.backend.libusb1"]

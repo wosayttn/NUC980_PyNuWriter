@@ -1,0 +1,42 @@
+{
+    "mode": "sd",
+    "ddr": "../sys_cfg/NUC980DK71YC.ini",
+    "output": "nuwriter-pack-sd.bin",
+    "image": [
+        {
+            "file": "u-boot-sd.bin",
+            "offset": "0x400",
+            "type": "loader",
+            "exec_addr": "0xe00000"
+        },
+        {
+            "file": "uboot-env-sd1.txt",
+            "offset": "0x80000",
+            "type": "env"
+        },
+        {
+            "file": "nuc980-iot-128m-bmc.dtb",
+            "offset": "0x180000",
+            "type": "data"
+        },
+        {
+            "file": "uImage",
+            "offset": "0x200000",
+            "type": "linux"
+        },
+        {
+            "file": "obmc-phosphor-image-numaker-iot-nuc980g2.ext4",
+            "offset": "0x800000",
+            "type": "data"
+        },
+        {
+            "offset": "0xffffffff",
+            "type": "partition",
+            "partition": {
+                "count": 1,
+                "reserved_size": 8,
+                "sizes": [0]
+            }
+        }
+    ]
+}
