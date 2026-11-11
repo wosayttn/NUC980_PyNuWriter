@@ -9,6 +9,7 @@ import configparser
 import importlib
 import io
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -667,7 +668,20 @@ def run_pre_attach_hook():
         raise NuWriterError(f"Pre-attach hook failed with exit code {result.returncode}")
 
 
+def configure_libusb_path():
+    if sys.platform != "win32":
+        return
+    directory = Path(__file__).resolve().parent / "Driver"
+    if not (directory / "libusb-1.0.dll").is_file():
+        return
+    current = os.environ.get("PATH", "")
+    entries = [entry.strip('"').rstrip("\\/").casefold() for entry in current.split(os.pathsep)]
+    if str(directory).casefold() not in entries:
+        os.environ["PATH"] = str(directory) + (os.pathsep + current if current else "")
+
+
 def discover_devices():
+    configure_libusb_path()
     try:
         core = importlib.import_module("usb.core")
     except ModuleNotFoundError as error:
@@ -697,6 +711,7 @@ def select_devices(devices, all_devices=False, selection=None):
 
 class UsbSession:
     def __init__(self, device, timeout, trace=False):
+        configure_libusb_path()
         self.core = importlib.import_module("usb.core")
         self.util = importlib.import_module("usb.util")
         self.timeout = timeout
