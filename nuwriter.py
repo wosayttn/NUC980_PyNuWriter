@@ -671,7 +671,7 @@ def run_pre_attach_hook():
 def configure_libusb_path():
     if sys.platform != "win32":
         return
-    directory = Path(__file__).resolve().parent / "Driver"
+    directory = Path(__file__).resolve().parent / "driver"
     if not (directory / "libusb-1.0.dll").is_file():
         return
     current = os.environ.get("PATH", "")

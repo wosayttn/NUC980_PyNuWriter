@@ -27,10 +27,10 @@ On Debian/Ubuntu, install `python3-venv` and `libusb-1.0-0`, create/activate
 a virtual environment, then install the same requirements. Set USB access
 permissions for your user.
 
-On Windows, the bundled `Driver/libusb-1.0.dll` requires 64-bit Python.
-Before USB access, the tool automatically adds its absolute `Driver` directory
+On Windows, the bundled `driver/libusb-1.0.dll` requires 64-bit Python.
+Before USB access, the tool automatically adds its absolute `driver` directory
 to the current process `PATH`. No permanent environment changes are made.
-See [Driver/README.md](Driver/README.md).
+See [driver/README.md](driver/README.md).
 
 Keep `sys_cfg` and `xusb` beside the script. Examples use NUC980DK71YC;
 select the DDR settings and image addresses for your board. Relative image
@@ -179,6 +179,6 @@ do not proceed to programming; wait for the board to stop and reinitialize.
 Project-owned Python source code and documentation are licensed under the
 [Apache License, Version 2.0](LICENSE).
 
-Bundled libusb uses LGPL-2.1-or-later; see [Driver/README.md](Driver/README.md).
+Bundled libusb uses LGPL-2.1-or-later; see [driver/README.md](driver/README.md).
 Third-party software, the WinUSB installer, XUSB firmware, and DDR configuration
 files retain their original licenses and copyrights; they are not relicensed.
