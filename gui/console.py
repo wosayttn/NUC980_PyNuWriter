@@ -123,6 +123,7 @@ class TerminalView(QPlainTextEdit):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.document().setDocumentMargin(0)
         self.setStyleSheet("QPlainTextEdit#serialTerminal { background: #000000; color: #e6e6e6; selection-background-color: #355572; selection-color: #ffffff; }")
         self.setTabChangesFocus(False)
         self.can_send = False

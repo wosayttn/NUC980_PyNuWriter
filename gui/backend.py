@@ -1,4 +1,4 @@
-"""Command construction for the unmodified NuWriter backend."""
+"""Command construction for the NuWriter backend."""
 
 import configparser
 import io

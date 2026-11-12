@@ -9,6 +9,7 @@ import configparser
 import importlib
 import io
 import json
+import mmap
 import os
 import struct
 import subprocess
@@ -94,34 +95,47 @@ class UsbTransport:
         self.device = device
         self.timeout = timeout
         self.trace = trace
+        self.trace_control = None
+        control_path = os.environ.get("NUWRITER_TRACE_CONTROL")
+        if control_path:
+            self.trace = False
+            try:
+                with open(control_path, "rb") as control:
+                    self.trace_control = mmap.mmap(control.fileno(), 1, access=mmap.ACCESS_READ)
+            except (OSError, ValueError):
+                pass
 
-    def log(self, message):
-        if self.trace:
-            print(f"USB {message}", file=sys.stderr, flush=True)
+    def log(self, message, *arguments, data=None):
+        enabled = bool(self.trace_control[0]) if self.trace_control is not None else self.trace
+        if not enabled:
+            return
+        if arguments:
+            message %= arguments
+        if data is not None:
+            message += " data=" + data[:64].hex(" ") + (" ..." if len(data) > 64 else "")
+        print(f"USB {message}", file=sys.stderr, flush=True)
 
     def write(self, data):
         data = bytes(data)
         if not 0 < len(data) <= 0xFFFF:
             raise NuWriterError("USB transfer length must be between 1 and 65535")
-        self.log(f"CONTROL OUT request=0xa0 value=0x0012 index={len(data)} length=0")
+        self.log("CONTROL OUT request=0xa0 value=0x0012 index=%d length=0", len(data))
         self.device.ctrl_transfer(
             0x40, 0xA0, wValue=0x12, wIndex=len(data),
             data_or_wLength=b"", timeout=self.timeout,
         )
         self.log("CONTROL OUT completed")
-        preview = data[:64].hex(" ") + (" ..." if len(data) > 64 else "")
-        self.log(f"BULK OUT endpoint=0x02 length={len(data)} data={preview}")
+        self.log("BULK OUT endpoint=0x02 length=%d", len(data), data=data)
         written = self.device.write(0x02, data, timeout=self.timeout)
-        self.log(f"BULK OUT completed length={written}")
+        self.log("BULK OUT completed length=%d", written)
         if written != len(data):
             raise NuWriterError(f"Short USB write: {written}/{len(data)}")
 
     def read(self, size, minimum=None, timeout=None):
         read_timeout = self.timeout if timeout is None else timeout
-        self.log(f"BULK IN endpoint=0x81 length={size} timeout={read_timeout} ms")
+        self.log("BULK IN endpoint=0x81 length=%d timeout=%d ms", size, read_timeout)
         data = bytes(self.device.read(0x81, size, timeout=read_timeout))
-        preview = data[:64].hex(" ") + (" ..." if len(data) > 64 else "")
-        self.log(f"BULK IN completed length={len(data)} data={preview}")
+        self.log("BULK IN completed length=%d", len(data), data=data)
         required = size if minimum is None else minimum
         if not required <= len(data) <= size:
             raise NuWriterError(f"Short USB read: {len(data)}/{size}")
@@ -140,17 +154,17 @@ class UsbTransport:
         value = 0x80 + media
         deadline = time.monotonic() + self.timeout / 1000
         while True:
-            self.log(f"CONTROL OUT request=0xb0 value=0x{value:04x} index=0 length=0")
+            self.log("CONTROL OUT request=0xb0 value=0x%04x index=0 length=0", value)
             self.device.ctrl_transfer(
                 0x40, 0xB0, wValue=value, wIndex=0,
                 data_or_wLength=b"", timeout=self.timeout,
             )
-            self.log(f"CONTROL IN request=0xb0 value=0x{value:04x} index=0 length=2")
+            self.log("CONTROL IN request=0xb0 value=0x%04x index=0 length=2", value)
             reply = bytes(self.device.ctrl_transfer(
                 0xC0, 0xB0, wValue=value, wIndex=0,
                 data_or_wLength=2, timeout=self.timeout,
             ))
-            self.log(f"CONTROL IN completed length={len(reply)} data={reply.hex(' ')}")
+            self.log("CONTROL IN completed length=%d", len(reply), data=reply)
             if reply and reply[0] == value:
                 return
             if time.monotonic() >= deadline:

@@ -29,16 +29,21 @@ for ANSI terminal handling.
 
 ## Serial Console
 
-Click **Console**, to the left of **Op. log**, to show or hide the console
-window. The port list, baud rate, Refresh, and **Open** controls are inside
+The **Console**, **USB Trace**, and **Op. log** buttons are right-aligned after
+**Refresh** in the USB Device row and stay available during backend operations.
+Click **Console** to show or hide the console window.
+The port list, baud rate, Refresh, and **Open** controls are inside
 that window. Select the board's debug UART/VCOM, not the CH341 reset adapter,
 then click **Open** to connect. Showing the window does not open a serial port.
 Refresh the list after connecting or removing an adapter.
 
-The console matches the main window's width and height and opens on its right,
-aligned at the top. It follows the main window when moved or resized. It stays
-on the same screen; insufficient space on the right may cause the windows to
-overlap. The terminal has no visible horizontal or vertical scrollbars. Use the
+On its first opening without saved geometry, the console matches the main
+window's size and opens on its right, aligned at the top. Afterward, hiding or
+closing it retains its position and size; reopening restores them without
+following main-window moves or resizing. Geometry is also saved in settings
+for the next application run. Qt may adjust it if the original screen is no
+longer available; Wayland may override window positions.
+The terminal has no visible horizontal or vertical scrollbars. Use the
 mouse wheel to browse scrollback; new output always returns to the latest text.
 
 The black terminal receives UART output and accepts keyboard input directly.
@@ -54,8 +59,7 @@ connection. Click **Close** before changing the port or baud rate. Opening
 failure, closing, or device removal leaves the button showing **Open**.
 Closing the console window,
 pressing Esc outside terminal input, or exiting the main window releases the port.
-The console remains usable during backend operations. Check only applies to
-backend commands, not to an explicit console **Open** or keyboard input.
+The console remains usable during backend operations.
 
 ANSI foreground/background colors support standard/bright colors, 256 colors,
 and RGB. Bold, italic, underline, strikethrough, reverse video, and color reset
@@ -64,6 +68,38 @@ are rendered along with `pyte` cursor movement and clearing.
 The console has no Save or Clear buttons; text can be selected and copied.
 DTR/RTS are requested inactive before opening; some adapters/drivers may still
 pulse lines on open, so verify your reset wiring.
+
+## USB Trace
+
+The **USB Trace** button beside **Console** shows or hides the trace window.
+Showing it enables recording; hiding or closing it disables recording, backend
+trace formatting, and GUI trace processing. This also applies during a running
+operation, without restarting the backend or interrupting USB transfers.
+
+The trace window opens to the right of the main window, aligned at the top,
+and follows main-window moves and resizing without changing its own size.
+It stays on the main window's screen; insufficient space may cause overlap.
+On Wayland, the compositor may override the requested position.
+
+Trace records go only to this window. Commands, progress, and errors remain in
+Operation Log. The trace window uses colored, fixed-width text on black.
+`H->D` means host to device; `D->H` means device to host.
+Data values start on the next line, with 16 bytes per line and five leading
+spaces. Data lines keep the transaction color; a trailing `...` marks a
+truncated preview.
+
+| Transaction | Prefix | Color |
+| --- | --- | --- |
+| CONTROL OUT | `H->D` | Blue |
+| CONTROL IN | `D->H` | Cyan |
+| BULK OUT | `H->D` | Amber |
+| BULK IN | `D->H` | Green |
+
+Hiding or closing the window retains existing contents but adds no new records.
+Only one trace window is used; its button stays available during operations.
+The latest 10,000 lines are retained and new output scrolls to the latest entry.
+Text can be selected and copied. Trace data may contain image or readback bytes;
+review it before sharing.
 
 ## Program Flash
 
@@ -75,13 +111,17 @@ pulse lines on open, so verify your reset wiring.
    Data, Environment, Loader, or Pack.
 5. Set the image start offset and execution address, then click Program.
 
+DDR Init lists only INI files from the project's relative `sys_cfg` directory.
+External DDR file browsing is unavailable. Paths are resolved relative to the
+project location, independently of the current working directory.
+
 All addresses and read/erase lengths are bytes; use `0x` for hexadecimal.
 Loader images need the selected DDR settings and the correct linked entry
 address. Their start offset is 0 for flash or `0x400` for SD/eMMC.
 
-Each operation is checked offline before the actual command starts. Check only
-runs that check without board access or pack/readback output writes. Save JSON
-is an explicit file-writing action, independent of Check only.
+Each operation is checked offline before the actual command starts. A failed
+check prevents the actual operation from starting. Save JSON writes the
+configuration file directly.
 
 ## Actions
 
@@ -93,16 +133,15 @@ is an explicit file-writing action, independent of Check only.
 | Read | Saves the selected byte range, or the whole device, to a file |
 | Erase | Erases all good blocks or an aligned range after confirmation |
 | Format | SD/eMMC only; replaces partition/format data and reinitializes DDR/XUSB |
-| Stop | Stops the host process; the board may still be busy |
 
 Standalone Verify supports Data images only. For Loader and Environment,
 use Program + Verify. Pack verification is not supported. Read/Verify obey
 the backend's read alignment, including 64 KiB for SPI NOR.
 
 SD/eMMC Format sizes are MiB, and the final partition uses remaining capacity.
-Formatting and erase destroy data. Stop cannot undo a write or erase; check
-or reset the target before reconnecting. It does not guarantee that a reset
-hook's child process has stopped.
+Formatting and erase destroy data. Interrupted writes or erases cannot be undone;
+check or reset the target before reconnecting. Use the title-bar close button
+to exit after the current operation has finished.
 
 ## SDRAM
 
@@ -128,12 +167,51 @@ Choose Mass Production to program a pack to all connected targets sequentially.
 Re-Connect in this mode initializes all targets. Device-specific selection,
 readback, and pack verification are unavailable in this mode.
 
+## Saved Settings And Input Validation
+
+Closing the application saves `settings.json` in Qt's per-user application
+configuration directory (`QStandardPaths.AppConfigLocation`). On Windows this
+is normally `%LOCALAPPDATA%/NUC980 PyNuWriter`; on Linux it is normally
+`~/.config/NUC980 PyNuWriter` (or the directory selected by `XDG_CONFIG_HOME`).
+
+The JSON stores the selected media/DDR/USB target, image lists and selected
+rows, page fields/options, Pack drafts and configuration path, dialog defaults,
+Console port/baud, and window sizes. Paths to DDR files remain restricted to
+the bundled `sys_cfg` directory. Existing DDR selections migrate from the old
+platform settings. Existing logs, connection state, active operations, and
+popup visibility are not restored. Startup never connects or programs a target.
+
+Writes are atomic. Invalid JSON loads defaults and is backed up as
+`settings.json.<timestamp>.invalid` before a replacement is written. Invalid
+individual values are ignored. If saving fails, the application reports the
+error and stays open so the settings are not silently lost.
+
+Address and byte-length editors require `0x` followed by 1-8 hexadecimal digits
+(`0x0` through `0xffffffff`). Invalid characters are rejected while typing;
+incomplete or out-of-range values cannot start an operation. Read/erase lengths
+must be nonzero. Numeric partition controls enforce their own ranges. File paths
+and bootargs reject control characters; source/output paths are checked before
+use. Additional Pack parameters must be a JSON object. Backend preflight still
+checks image formats, alignment, and device-specific constraints before access.
+
 ## Logs And Tests
+
+When Operation Log is first opened during an application run, it queries the
+host OS/kernel, CPU architecture and core
+counts, total/available RAM, Python interpreter, Qt platform, display sizes/DPI
+scale, and settings-file location. It also lists versions and loaded status for
+PySide6, pyte, pyserial, psutil, PyUSB, and pyfdt using package metadata; deferred
+backend modules are not imported just to report their versions.
+Missing hardware information is marked
+unavailable. These queries do not run when the main window starts, and are not
+repeated when the log is hidden and shown again. This does not scan USB devices
+or open serial ports. The record remains in the log and is not saved in settings.
 
 Click **Op. log** to toggle the nonmodal Operation Log window on or off.
 The button stays checked while the window is shown. Only one log window is
 used; output continues to accumulate while hidden and is retained when shown
-again. The log appears directly below the main window, matches its width, has
+again. The log appears directly below the main window, matches its outer width
+including window borders, has
 a fixed height of 320, and follows it when moved or resized. Exiting the main
 window also hides the log.
 
@@ -148,8 +226,7 @@ always scrolls to the latest text.
 The main 800x560 window uses the freed
 space for the active media page, keeping Flash controls side by side.
 
-An operation cannot start while another is running. USB trace adds diagnostic
-payloads to the log; review it before sharing.
+An operation cannot start while another is running.
 
 ```bash
 python -m unittest discover -s gui -p test_gui.py -v
