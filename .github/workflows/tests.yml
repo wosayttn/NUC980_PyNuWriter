@@ -52,3 +52,7 @@ jobs:
       - name: Run GUI tests
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: python -m unittest discover -s gui -p test_gui.py -v
+
+      - name: Run export tooling tests
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: python -m unittest discover -s .github/scripts -p test_export.py -v

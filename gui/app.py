@@ -10,7 +10,7 @@ import tempfile
 import time
 from collections import deque
 from datetime import datetime
-from importlib import metadata
+from importlib import import_module, metadata
 from pathlib import Path
 
 import psutil
@@ -1685,8 +1685,7 @@ def create_application():
 def main():
     application = create_application()
     if getattr(sys, "frozen", False) and len(sys.argv) == 3 and sys.argv[1] == "--export-smoke-test":
-        from export import smoke_gui
-        return smoke_gui(application, MainWindow, sys.argv[2])
+        return import_module("export_smoke").smoke_gui(application, MainWindow, sys.argv[2])
     window = MainWindow()
     window.show()
     return application.exec()

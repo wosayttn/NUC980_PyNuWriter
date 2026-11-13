@@ -1,0 +1,9 @@
+-r ../../gui/requirements.txt
+PyInstaller==6.22.3
+pyinstaller-hooks-contrib==2026.10
+PySide6==6.12.0
+pyte==0.8.2
+psutil==7.2.2
+pyusb==1.3.1
+pyserial==3.5
+wcwidth==0.9.4

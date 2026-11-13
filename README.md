@@ -10,10 +10,7 @@ for interactive use, or follow the CLI examples below.
 
 No Python installation is needed for the standalone CLI or GUI.
 
-1. Open this repository's **Actions > Export > Run workflow**. Export also runs
-	when a `v*` tag is pushed.
-2. After a successful run, download the desired CLI or GUI from **Artifacts**.
-	GitHub sign-in is required. Artifacts are retained for 30 days.
+Choose the CLI or GUI package matching your operating system and architecture.
 
 | Platform | CLI artifact | GUI artifact |
 | --- | --- | --- |
@@ -30,8 +27,7 @@ not single-file executables. The GUI already includes its CLI backend.
 
 On macOS, the extracted `nuwriter-gui` directory contains `nuwriter-gui.app`
 and the sibling `backend` directory. Keep both in that directory; move the
-whole directory, not just the `.app`. The app bundle is preserved as generated
-and signed by PyInstaller; export verifies its signature before archiving.
+whole directory, not just the `.app`.
 
 Open `nuwriter-gui.exe`, `nuwriter-gui`, or `nuwriter-gui.app` for the GUI.
 For CLI examples below, replace `python nuwriter.py` with `.\nuwriter.exe`
@@ -54,25 +50,10 @@ On macOS, install matching-architecture libusb:
 brew install libusb
 ```
 
-Linux exports are built on Ubuntu 22.04; older glibc systems are not supported.
-macOS exports are built on macOS 15; older releases are not verified. Builds
+Linux packages require Ubuntu 22.04 or a compatible glibc system.
+macOS packages target macOS 15; older releases are not verified. Packages
 are not developer-signed or notarized, so Windows/macOS may display security
 warnings. Verify the source and checksum before opening them.
-
-To build locally in an activated Python 3.14 environment on the target OS:
-
-```bash
-python -m pip install -r requirements-export.txt
-```
-
-```bash
-python export.py
-```
-
-Archives and checksums are written to `dist/artifacts`. The
-[Export workflow](.github/workflows/export.yml) runs tests before building;
-the exporter then verifies extracted CLI/GUI archives offline without USB,
-serial, reset, or flash operations. It does not publish GitHub Releases.
 
 ## Install From Source
 
@@ -434,3 +415,10 @@ Project-owned Python source code and documentation are licensed under the
 Bundled libusb uses LGPL-2.1-or-later; see [driver/README.md](driver/README.md).
 Third-party software, the WinUSB installer, XUSB firmware, and DDR configuration
 files retain their original licenses and copyrights; they are not relicensed.
+
+Standalone packages include third-party notices, GPL/LGPL texts, matching library
+source archives and rebuildable application source. Keep `licenses/` and
+`sources/` with the application when redistributing it. Qt Virtual Keyboard and
+its plugins are excluded; pyte is supplied as replaceable Python source.
+See [redistribution and replacement instructions](licenses/README.md).
+Distributors remain responsible for legal review of their distribution terms.

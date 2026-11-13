@@ -10,10 +10,7 @@
 
 独立封装的 CLI 与 GUI 不需要另外安装 Python。
 
-1. 在此 repository 打开 **Actions > Export > Run workflow**。推送 `v*` tag
-	也会触发 Export。
-2. 执行成功后，从 **Artifacts** 下载所需的 CLI 或 GUI。下载需要登录 GitHub，
-	产出物保留 30 天。
+请选择符合所用操作系统与架构的 CLI 或 GUI 软件包。
 
 | 平台 | CLI artifact | GUI artifact |
 | --- | --- | --- |
@@ -28,8 +25,7 @@
 不是单文件封装。GUI 已包含 CLI backend，不需要另外下载 CLI。
 
 macOS 解压后的 `nuwriter-gui` 目录内包含 `nuwriter-gui.app` 与同级的 `backend`。
-请保留两者，移动时须移动整个目录，不要只取出 `.app`。封装会保留 PyInstaller
-生成并签名的 app bundle，并在压缩前验证其签名。
+请保留两者，移动时须移动整个目录，不要只取出 `.app`。
 
 GUI 请打开 `nuwriter-gui.exe`、`nuwriter-gui` 或 `nuwriter-gui.app`。
 使用下方 CLI 示例时，请在解压后的 `nuwriter` 目录，将 `python nuwriter.py`
@@ -51,23 +47,9 @@ macOS 请安装与执行文件架构相同的 libusb：
 brew install libusb
 ```
 
-Linux 版本在 Ubuntu 22.04 构建，不支持更旧的 glibc 系统。macOS 版本在 macOS 15
-构建，更旧版本尚未验证。产出物没有开发者签名或公证，Windows／macOS 可能显示
+Linux 软件包需要 Ubuntu 22.04 或兼容的 glibc 系统。macOS 软件包面向 macOS 15，
+更旧版本尚未验证。软件包没有开发者签名或公证，Windows／macOS 可能显示
 安全警告；打开前请确认来源与校验码。
-
-如需自行构建，请在目标操作系统启用 Python 3.14 环境后执行：
-
-```bash
-python -m pip install -r requirements-export.txt
-```
-
-```bash
-python export.py
-```
-
-压缩包与校验文件输出到 `dist/artifacts`。[Export workflow](.github/workflows/export.yml)
-会先执行测试；封装工具再解压 CLI／GUI 压缩包进行离线验证，不会访问 USB、串口、
-复位或烧录开发板，也不会发布 GitHub Releases。
 
 ## 从源码安装
 
@@ -425,3 +407,9 @@ Windows batch 集成测试需要同级的 `numaker-iot-nuc980g2` 目录；
 内置 libusb 采用 LGPL-2.1-or-later，详见[驱动程序指南](driver/README.zh-CN.md)。
 第三方软件、WinUSB 安装程序、XUSB 固件与 DDR 配置文件保留各自的原始许可与版权，
 不会因本项目而改变其许可。
+
+独立发行包包含第三方声明、GPL／LGPL 正文、对应版本的库源代码归档，
+以及可重新构建的应用程序源代码。再次分发时，请保留 `licenses/` 和 `sources/`。
+发行包排除 Qt Virtual Keyboard 及其插件；pyte 保留为可替换的 Python 源代码。
+详见[再次分发与替换说明（英文）](licenses/README.md)。
+分发者仍须对其分发条件进行法务审核。
