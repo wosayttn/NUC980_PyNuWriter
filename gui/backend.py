@@ -91,9 +91,9 @@ def program(target, media, image, verify=False):
     if media not in MEDIA or media == "SDRAM" or image.kind not in KINDS:
         raise ValueError("Select flash media and an image type.")
     if image.kind == "Pack":
-        if verify:
-            raise ValueError("Pack programming does not support verification.")
         arguments = ["-w", MEDIA[media], filename, "--ddr", target.ddr_file()]
+        if verify:
+            arguments += ["-o", "verify"]
     else:
         offset = number(image.offset)
         execute = number(image.execute)

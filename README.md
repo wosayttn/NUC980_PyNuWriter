@@ -161,7 +161,25 @@ After initialization, program the generated pack:
 python nuwriter.py -w spinand pack.bin --ddr NUC980DK71YC.ini
 ```
 
-Erase separately if required. Pack programming does not support `-o verify`.
+For a single board, erase separately if required and add `-o verify` to compare
+packed image data after programming:
+
+```bash
+python nuwriter.py -w spinand pack.bin --ddr NUC980DK71YC.ini -o verify
+```
+
+For the complete sequential Mass Production workflow:
+
+```bash
+python nuwriter.py -m -w spinand pack.bin --ddr NUC980DK71YC.ini -o verify
+```
+
+This performs Erase All before Burn/Verify on NAND/SPI NAND, deleting existing
+boot, environment and filesystem data while preserving marked bad blocks.
+SPI NOR and SD/eMMC skip the separate erase. Each board reports its stages and
+result; failures do not retry and do not stop later boards. Any failure returns
+a nonzero exit status. Without `-o verify`, existing `-m` programming remains
+sequential and does not add Erase All.
 
 ## Checks And Troubleshooting
 

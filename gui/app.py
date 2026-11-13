@@ -256,6 +256,7 @@ def table(headers):
 class BackendRunner(QWidget):
     output = Signal(str)
     trace_output = Signal(str)
+    mass_update = Signal(dict)
     command_started = Signal(str)
     progress = Signal(int)
     finished = Signal(bool, str)
@@ -356,6 +357,17 @@ class BackendRunner(QWidget):
                 if self.trace_enabled:
                     self.trace_output.emit(line)
                 continue
+            if line.startswith("MP "):
+                try:
+                    event = json.loads(line[3:])
+                except ValueError:
+                    event = None
+                if isinstance(event, dict) and all(isinstance(event.get(key), str) for key in ("device", "stage", "status")):
+                    self.mass_update.emit(event)
+                    detail = str(event.get("detail", ""))
+                    prefix = "Error: " if event["status"] == "Failed" else ""
+                    self.output.emit(prefix + f"Device {event['device']} {event['stage']}: {event['status']}" + (f" - {detail}" if detail else ""))
+                    continue
             value = backend.progress_value(line)
             if value is not None:
                 self.progress.emit(value)
@@ -678,9 +690,7 @@ class FlashPanel(QWidget):
         packed = kind == "Pack"
         self.offset.setEnabled(not packed)
         self.execute.setEnabled(not packed)
-        self.verify_after.setEnabled(not packed)
-        if packed:
-            self.verify_after.setChecked(False)
+        self.verify_after.setEnabled(True)
         self.verify_button.setEnabled(kind == "Data")
         self.verify_button.setToolTip("Read back and compare; never programs. Data images only.")
         self.erase_button.setEnabled(media != "SD/eMMC")
@@ -1007,6 +1017,7 @@ class MassPanel(QWidget):
     def __init__(self, window):
         super().__init__()
         self.window = window
+        self.device_rows = {}
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.media = QComboBox()
@@ -1017,11 +1028,45 @@ class MassPanel(QWidget):
         self.state = QLabel("All connected NUC980 targets")
         form.addRow("Device selection:", self.state)
         layout.addLayout(form)
-        layout.addStretch()
+        self.results = table(["Device", "Erase", "Burn", "Verify", "Result"])
+        self.results.setMinimumHeight(150)
+        layout.addWidget(self.results, 1)
+        self.summary = QLabel("No results")
+        layout.addWidget(self.summary)
         row = QHBoxLayout()
         row.addStretch()
         row.addWidget(button("Program", QStyle.StandardPixmap.SP_DialogApplyButton, self.program))
         layout.addLayout(row)
+
+    def clear_results(self):
+        self.results.setRowCount(0)
+        self.device_rows.clear()
+        self.summary.setText("No results")
+
+    def update_result(self, event):
+        device = event["device"]
+        row = self.device_rows.get(device)
+        if row is None:
+            row = self.results.rowCount()
+            self.device_rows[device] = row
+            self.results.insertRow(row)
+            for column, value in enumerate((device, "Pending", "Pending", "Pending", "Pending")):
+                self.results.setItem(row, column, QTableWidgetItem(value))
+        stage, status = event["stage"], event["status"]
+        column = {"Erase": 1, "Burn": 2, "Verify": 3, "Result": 4}.get(stage)
+        if column is not None:
+            item = self.results.item(row, column)
+            item.setText(status)
+            item.setToolTip(str(event.get("detail", "")))
+            color = {"Passed": "#21643c", "Failed": "#c62828", "Running": "#005fb8"}.get(status, "#727272")
+            item.setForeground(QColor(color))
+            if stage == "Result" and status == "Failed":
+                for pending in range(1, 4):
+                    if self.results.item(row, pending).text() in {"Pending", "Running"}:
+                        self.results.item(row, pending).setText("Not run")
+        results = [self.results.item(index, 4).text() for index in range(self.results.rowCount())]
+        passed, failed = results.count("Passed"), results.count("Failed")
+        self.summary.setText(f"Passed: {passed}  Failed: {failed}  Pending: {len(results) - passed - failed}")
 
     def browse(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Choose pack", "", "Binary files (*.bin);;All files (*)")
@@ -1031,8 +1076,10 @@ class MassPanel(QWidget):
     def program(self):
         try:
             validate_edits(self.filename)
-            command = backend.program(self.window.target(), self.media.currentText(), backend.ImageEntry(self.filename.text(), "Pack"))
-            self.window.submit(command, warning="Program this pack to ALL connected NUC980 targets?\nDevices are programmed sequentially. Existing data may be erased or overwritten.")
+            command = backend.program(self.window.target(), self.media.currentText(), backend.ImageEntry(self.filename.text(), "Pack"), verify=True)
+            command.label = f"{self.media.currentText()} mass production"
+            erase = "NAND/SPI NAND performs Erase All before burning, including existing boot, environment and filesystem data.\n" if self.media.currentText() in {"NAND", "SPI NAND"} else ""
+            self.window.submit(command, warning="Program and verify this pack on ALL connected NUC980 targets?\n" + erase + "Devices are processed sequentially. Failed boards are not retried; remaining boards continue.")
         except (ValueError, OSError) as error:
             self.window.error(str(error))
 
@@ -1092,22 +1139,33 @@ class USBTraceWindow(QDialog):
         if not self.isVisible():
             return
         message = text.removeprefix("USB ")
+        origin = ""
+        if message.startswith("("):
+            path, separator, remainder = message.partition(") ")
+            if separator:
+                origin = f"[{path[1:]}] "
+                message = remainder
+        indent_width = len(origin)
         color = "#e6e6e6"
         for transaction, (direction, transaction_color) in self.transaction_styles.items():
             if message == transaction or message.startswith(transaction + " "):
-                message = f"{direction} {message}"
+                message = f"<{direction}> {message}"
+                indent_width += len(direction) + 3
                 color = transaction_color
                 break
+        message = origin + message
         header, separator, payload = message.partition(" data=")
         if separator:
             values = payload.split()
-            suffix = " ..." if values and values[-1] == "..." else ""
-            if suffix:
+            truncated = bool(values and values[-1] == "...")
+            if truncated:
                 values.pop()
-            rows = ["     " + " ".join(values[offset:offset + 16])
-                    for offset in range(0, len(values), 16)] or ["     "]
-            rows[-1] += suffix
-            message = header + separator + "\n" + "\n".join(rows)
+            indent = " " * indent_width
+            rows = [indent + " ".join(values[offset:offset + 16])
+                    for offset in range(0, len(values), 16)] or [indent]
+            if truncated:
+                rows.append(indent + "...")
+            message = header + "\n" + "\n".join(rows)
         cursor = self.log.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if not self.log.document().isEmpty():
@@ -1219,6 +1277,7 @@ class MainWindow(QMainWindow):
         self.ram = RamPanel(self)
         self.pack = PackPanel(self)
         self.mass = MassPanel(self)
+        self.runner.mass_update.connect(self.mass.update_result)
         self.pages.addWidget(self.flash)
         self.pages.addWidget(self.ram)
         self.pages.addWidget(self.pack)
@@ -1467,6 +1526,8 @@ class MainWindow(QMainWindow):
                 return
         self.operation = command.label
         self.collected = []
+        if self.media.currentText() == "Mass Production" and "-w" in command.arguments:
+            self.mass.clear_results()
         self.runner.start(command)
 
     def set_busy(self, busy):
@@ -1518,6 +1579,8 @@ class MainWindow(QMainWindow):
                 success, message = False, str(error)
         elif success and self.operation == "Re-Connect":
             message = "DDR/XUSB ready"
+        elif self.operation.endswith("mass production") and self.mass.results.rowCount():
+            message = self.mass.summary.text()
         self.cleanup_verification()
         self.cleanup_snapshot()
         self.progress.setRange(0, 100)

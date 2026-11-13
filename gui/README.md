@@ -83,17 +83,23 @@ On Wayland, the compositor may override the requested position.
 
 Trace records go only to this window. Commands, progress, and errors remain in
 Operation Log. The trace window uses colored, fixed-width text on black.
-`H->D` means host to device; `D->H` means device to host.
-Data values start on the next line, with 16 bytes per line and five leading
-spaces. Data lines keep the transaction color; a trailing `...` marks a
-truncated preview.
+`<H->D>` means host to device; `<D->H>` means device to host.
+Each transaction starts with its USB bus/port path, for example
+`[2:4.2.2] <H->D> CONTROL OUT request=0xb0 value=0x0080 index=0 length=0`.
+This identifies the device; bulk endpoint addresses remain in `endpoint=`.
+Records without available device-path information retain the unprefixed format.
+The `data=` label is omitted. Data values start on the next line, with 16 bytes
+per line, aligned with the first character of the transaction name (`BULK` or
+`CONTROL`). The indentation adjusts to the device-path and direction prefix.
+Data lines keep the transaction color; `...` appears on its own equally
+indented line when the preview is truncated.
 
 | Transaction | Prefix | Color |
 | --- | --- | --- |
-| CONTROL OUT | `H->D` | Blue |
-| CONTROL IN | `D->H` | Cyan |
-| BULK OUT | `H->D` | Amber |
-| BULK IN | `D->H` | Green |
+| CONTROL OUT | `<H->D>` | Blue |
+| CONTROL IN | `<D->H>` | Cyan |
+| BULK OUT | `<H->D>` | Amber |
+| BULK IN | `<D->H>` | Green |
 
 Hiding or closing the window retains existing contents but adds no new records.
 Only one trace window is used; its button stays available during operations.
@@ -135,7 +141,7 @@ configuration file directly.
 | Format | SD/eMMC only; replaces partition/format data and reinitializes DDR/XUSB |
 
 Standalone Verify supports Data images only. For Loader and Environment,
-use Program + Verify. Pack verification is not supported. Read/Verify obey
+use Program + Verify. Pack images also support Program + Verify. Read/Verify obey
 the backend's read alignment, including 64 KiB for SPI NOR.
 
 SD/eMMC Format sizes are MiB, and the final partition uses remaining capacity.
@@ -163,9 +169,23 @@ Relative image/DDR paths resolve from the configuration directory. Save JSON
 keeps that directory so relative paths do not change meaning. The snapshot
 is removed when the operation finishes or is cancelled.
 
-Choose Mass Production to program a pack to all connected targets sequentially.
-Re-Connect in this mode initializes all targets. Device-specific selection,
-readback, and pack verification are unavailable in this mode.
+Choose Mass Production to process connected targets sequentially. Each board
+is checked, then runs Erase, Burn, and Pack Verify. NAND/SPI NAND performs
+Erase All, preserving marked bad blocks; this deletes existing boot,
+environment, and filesystem data. SPI NOR and SD/eMMC skip the separate
+full-device erase. Re-Connect still initializes all targets sequentially.
+
+The results table shows Erase/Burn/Verify and the final result for each USB
+device path. A failed board is not retried; later boards continue, and any
+failure makes the overall operation fail. Invalid Pack/DDR configuration is
+rejected before programming. This version does not perform parallel burning
+or automatic reset/retry. Back up target data before starting MP.
+
+Pack Verify reads back each image using the firmware's action-7 protocol.
+Loader header/DDR bytes and SD partition instructions are excluded from the
+byte comparison. Loader must be first at offset 0 (flash) or 0x400 (SD/eMMC);
+SPI NOR image offsets must align to 64 KiB. Verify covers packed image data,
+not every physical/OOB byte or unused flash region.
 
 ## Saved Settings And Input Validation
 
@@ -233,7 +253,10 @@ python -m unittest discover -s gui -p test_gui.py -v
 ```
 
 Tests use simulated processes and the real backend's offline checks, not
-hardware operations. Windows rendering and offline flows have been checked;
+hardware operations. Real-image integration cases use the files and SPI NAND/
+SD1 configuration templates in [sample](../sample/README.md). Commit those
+fixtures with the tests; offline checks do not write pack outputs.
+Windows rendering and offline flows have been checked;
 Linux/macOS and real-board GUI operations still require platform testing.
 
 The GUI does not implement raw/OOB programming or custom device geometry.

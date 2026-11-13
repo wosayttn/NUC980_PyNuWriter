@@ -1,0 +1,10 @@
+baudrate=115200
+bootdelay=1
+watchdog=0
+stderr=serial
+stdin=serial
+stdout=serial
+bootargs=noinitrd root=/dev/mmcblk0p1 rootfstype=ext4 rw rootwait console=ttyS0,115200n8 init=/sbin/init mem=128M
+loadkernel=mmc read 0x8000 0x1000 0x3000
+loaddtb=mmc read 0x1400000 0xc00 0x40
+bootcmd=run loadkernel; run loaddtb; bootm 0x8000 - 0x1400000

@@ -60,6 +60,10 @@ class NuWriterError(Exception):
     pass
 
 
+def report_mass_progress(device, stage, status, detail=""):
+    print("MP " + json.dumps({"device": device, "stage": stage, "status": status, "detail": detail}), flush=True)
+
+
 class TransferProgress:
     def __init__(self, label, total):
         self.label = label
@@ -95,6 +99,7 @@ class UsbTransport:
         self.device = device
         self.timeout = timeout
         self.trace = trace
+        self.trace_path = None
         self.trace_control = None
         control_path = os.environ.get("NUWRITER_TRACE_CONTROL")
         if control_path:
@@ -109,11 +114,17 @@ class UsbTransport:
         enabled = bool(self.trace_control[0]) if self.trace_control is not None else self.trace
         if not enabled:
             return
+        if self.trace_path is None:
+            try:
+                self.trace_path = device_path(self.device)
+            except (AttributeError, TypeError, ValueError, OSError, NotImplementedError):
+                self.trace_path = ""
         if arguments:
             message %= arguments
         if data is not None:
             message += " data=" + data[:64].hex(" ") + (" ..." if len(data) > 64 else "")
-        print(f"USB {message}", file=sys.stderr, flush=True)
+        origin = f"({self.trace_path}) " if self.trace_path else ""
+        print(f"USB {origin}{message}", file=sys.stderr, flush=True)
 
     def write(self, data):
         data = bytes(data)
@@ -590,15 +601,17 @@ def parse_pack(data):
 
 
 def validate_pack(config, data):
-    if config.operation == "program_verify":
-        raise NuWriterError("Pack program_verify is unsupported; program individual images to verify")
     children = parse_pack(data)
     expected_ddr = None
     if config.ini.has_option("DDR", "ddr"):
         expected_ddr, name = load_ddr(config.ddr())
-    for header, payload, kind in children:
+    for index, (header, payload, kind) in enumerate(children):
         if kind == 3 and (config.mode != "SD" or len(payload) != 48):
             raise NuWriterError("Partition pack records require SD mode and a 48-byte payload")
+        if kind == 3:
+            validate_partition_payload(payload)
+        if config.operation == "program_verify" and config.mode == "SPINOR" and struct.unpack_from("<I", header, 4)[0] % 0x10000:
+            raise NuWriterError("Pack Verify SPI NOR offsets must be aligned to 64 KiB")
         if kind == IMAGE_TYPES["loader"]:
             if len(payload) < 40 or payload[:4] != b" TVN":
                 raise NuWriterError("Invalid Windows NuWriter loader header in pack")
@@ -608,6 +621,14 @@ def validate_pack(config, data):
                 raise NuWriterError("Invalid or truncated loader DDR data in pack")
             if expected_ddr is not None and payload[40:ddr_end] != expected_ddr:
                 raise NuWriterError("Pack DDR data does not match the selected DDR settings")
+            if config.operation == "program_verify":
+                offset = struct.unpack_from("<I", header, 4)[0]
+                if index != 0 or offset != (0x400 if config.mode == "SD" else 0):
+                    raise NuWriterError("Pack Verify requires the loader first, at 0 for flash or 0x400 for SD/eMMC")
+                if 32 + ((8 + count * 8 + 15) // 16) * 16 >= len(payload):
+                    raise NuWriterError("Pack loader has no executable data to verify")
+    if config.operation == "program_verify" and all(kind == 3 for header, payload, kind in children):
+        raise NuWriterError("Pack contains no image data to verify")
     return children
 
 
@@ -1117,6 +1138,83 @@ class Nuc980Writer:
                     self.wait_progress()
             progress.complete()
 
+    def verify_pack(self, prepared):
+        children = validate_pack(self.config, prepared.data)
+        images = []
+        for index, (header, payload, kind) in enumerate(children):
+            if kind == 3:
+                continue
+            offset = struct.unpack_from("<I", header, 4)[0]
+            ddr_length = 0
+            expected = payload
+            if kind == IMAGE_TYPES["loader"]:
+                count = struct.unpack_from("<I", payload, 36)[0]
+                ddr_length = ((8 + count * 8 + 15) // 16) * 16
+                expected = payload[32 + ddr_length:]
+                if not expected:
+                    raise NuWriterError("Pack loader has no executable data to verify")
+                if offset != (0x400 if self.config.mode == "SD" else 0):
+                    raise NuWriterError("Pack Verify loader offset must be 0 for flash or 0x400 for SD/eMMC")
+            images.append((index, header, payload, kind, expected, ddr_length))
+        if not images:
+            raise NuWriterError("Pack contains no image data to verify")
+        first = images[0]
+        first_offset = struct.unpack_from("<I", first[1], 4)[0]
+        acknowledgement = {"NAND": 0x83, "SPINAND": 0x89, "SPINOR": 0x85, "SD": 0x85}[self.config.mode]
+        self.transport.set_type(MEDIA[self.config.mode])
+        self.transport.write(self.header(7, file_length=len(first[2]), kind=first[3],
+                                         offset=first_offset, number=len(images)))
+        self.transport.expect(acknowledgement)
+        total = sum(len(image[4]) for image in images)
+        completed = 0
+        deadline = time.monotonic() + self.operation_timeout / 1000
+        with TransferProgress(f"{self.config.mode} pack verify", total) as progress:
+            for index, header, payload, kind, expected, ddr_length in images:
+                self.transport.write(header)
+                self.transport.expect(acknowledgement)
+                if ddr_length:
+                    self.transport.write(struct.pack("<I", ddr_length))
+                    self.transport.expect(acknowledgement)
+                for offset in range(0, len(expected), TRANSFER_SIZE):
+                    chunk = expected[offset:offset + TRANSFER_SIZE]
+                    wire_length = len(chunk) if self.config.mode == "SPINOR" else TRANSFER_SIZE
+                    remaining = int((deadline - time.monotonic()) * 1000)
+                    if remaining <= 0:
+                        raise NuWriterError(f"Pack Verify timed out at image {index}, data offset 0x{offset:x}")
+                    actual = self.transport.read(wire_length, timeout=max(1, min(self.transport.timeout, remaining)))
+                    matches = actual[:len(chunk)] == chunk
+                    self.transport.write(struct.pack("<I", wire_length if matches else 0))
+                    if not matches:
+                        raise NuWriterError(f"Pack verification failed at image {index}, data offset 0x{offset:x}")
+                    completed += len(chunk)
+                    progress.update(completed)
+            progress.complete()
+
+    def run_mass_pack(self, prepared, device):
+        def prepare():
+            validate_pack(self.config, prepared.data)
+            self.validate_write(prepared)
+
+        def erase_all():
+            self.config.ini.set(self.config.mode, "erase_all", "yes")
+            self.erase()
+
+        stages = [("Prepare", prepare), ("Erase", erase_all),
+                  ("Burn", lambda: self.program_pack(prepared)),
+                  ("Verify", lambda: self.verify_pack(prepared))]
+        for stage, operation in stages:
+            if stage == "Erase" and self.config.mode not in {"NAND", "SPINAND"}:
+                report_mass_progress(device, stage, "Skipped", "No separate full-device erase for this media")
+                continue
+            report_mass_progress(device, stage, "Running")
+            try:
+                operation()
+            except (NuWriterError, OSError, ValueError, ImportError, struct.error) as error:
+                report_mass_progress(device, stage, "Failed", str(error))
+                raise
+            report_mass_progress(device, stage, "Passed")
+        report_mass_progress(device, "Result", "Passed")
+
     def run(self, prepared):
         if self.config.operation == "attach":
             return
@@ -1138,6 +1236,8 @@ class Nuc980Writer:
                 print(f"Image {index}: {image.image.path}")
                 if image.image.kind == 3:
                     self.program_pack(image)
+                    if self.config.operation == "program_verify":
+                        self.verify_pack(image)
                 else:
                     self.program(image)
                 print(f"Image {index}: passed")
@@ -1670,18 +1770,34 @@ def main(argv=None):
         if config.initialize:
             run_pre_attach_hook()
         devices = select_devices(discover_devices(), config.all_devices, args.device)
+        mass_pack = (config.all_devices and config.operation == "program_verify" and
+                     len(prepared) == 1 and prepared[0].image.kind == IMAGE_TYPES["pack"])
+        failures = 0
         for device in devices:
-            print(f"Device {device_path(device)}: {config.mode}/{config.operation}")
-            session = UsbSession(device, args.timeout, trace=args.trace_usb)
+            identity = device_path(device)
+            print(f"Device {identity}: {config.mode}/{config.operation}")
+            session = None
+            if mass_pack:
+                report_mass_progress(identity, "Prepare", "Pending")
             try:
+                session = UsbSession(device, args.timeout, trace=args.trace_usb)
                 writer = Nuc980Writer(config, session.transport, session.reconnect, args.operation_timeout)
                 info = writer.attach() if config.initialize else writer.get_info()
                 print(f"NAND page size: {info['nand_page_size']}; SPI NAND page size: {info['spinand_page_size']}; SD sectors: {info['emmc_blocks']}")
-                writer.run(prepared)
+                if mass_pack:
+                    writer.run_mass_pack(prepared[0], identity)
+                else:
+                    writer.run(prepared)
                 print("Passed")
+            except (NuWriterError, OSError, ValueError, ImportError, struct.error) as error:
+                if not mass_pack:
+                    raise
+                failures += 1
+                report_mass_progress(identity, "Result", "Failed", str(error))
             finally:
-                session.close()
-        return 0
+                if session is not None:
+                    session.close()
+        return 1 if failures else 0
     except (NuWriterError, OSError, ValueError, ImportError, struct.error) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1

@@ -1,4 +1,5 @@
 import io
+import json
 import mmap
 import os
 import runpy
@@ -72,6 +73,216 @@ class USBTraceControlTests(unittest.TestCase):
                     transport.device.assert_not_called()
                 finally:
                     transport.trace_control.close()
+
+
+    def test_trace_uses_each_transports_actual_device_path(self):
+        devices = [SimpleNamespace(bus=2, port_numbers=(4, 2, 2), address=7),
+                   SimpleNamespace(bus=2, port_numbers=(4, 2, 3), address=8)]
+        with patch.dict(nuwriter.os.environ), patch.object(nuwriter.sys, "stderr", io.StringIO()) as output:
+            os.environ.pop("NUWRITER_TRACE_CONTROL", None)
+            transports = [nuwriter.UsbTransport(device, trace=True) for device in devices]
+            for transport in transports:
+                transport.log("CONTROL OUT request=0xb0 value=0x0080 index=0 length=0")
+                transport.log("BULK IN completed length=4", data=b"\x89\x00\x00\x00")
+            lines = output.getvalue().splitlines()
+            self.assertEqual(lines[0], "USB (2:4.2.2) CONTROL OUT request=0xb0 value=0x0080 index=0 length=0")
+            self.assertTrue(lines[1].startswith("USB (2:4.2.2) BULK IN completed"))
+            self.assertTrue(lines[2].startswith("USB (2:4.2.3) CONTROL OUT"))
+            self.assertTrue(lines[3].startswith("USB (2:4.2.3) BULK IN completed"))
+
+    def test_disabled_trace_does_not_query_device_path(self):
+        with patch.dict(nuwriter.os.environ), patch.object(nuwriter, "device_path") as path:
+            os.environ.pop("NUWRITER_TRACE_CONTROL", None)
+            transport = nuwriter.UsbTransport(Mock())
+            transport.log("CONTROL OUT completed")
+            path.assert_not_called()
+
+
+class PackVerificationTests(unittest.TestCase):
+    def prepared_pack(self, children):
+        data = b""
+        for offset, kind, payload in children:
+            data += struct.pack("<4I", len(payload), offset, kind, 0xFFFFFFFF) + payload
+        allocation = ((16 + len(data) + 0xFFFF) // 0x10000) * 0x10000
+        data = struct.pack("<4I", 5, allocation, len(children), 0xFFFFFFFF) + data
+        return nuwriter.PreparedImage(nuwriter.Image(Path("pack.bin"), 3, 0, 0), data, len(data))
+
+    def config(self, mode):
+        config = fixture_config()
+        config.mode = mode
+        config.ini.remove_section("DDR")
+        return config
+
+    def test_pack_verify_reads_data_and_environment_with_media_specific_tails(self):
+        first = bytes(range(256)) * 16 + b"tail"
+        environment = b"env"
+        prepared = self.prepared_pack([(0x100000, 0, first), (0x200000, 1, environment)])
+        for mode in ("SPINAND", "NAND", "SPINOR", "SD"):
+            with self.subTest(mode=mode):
+                transport = Mock()
+                transport.timeout = 10000
+                chunks = [first[:4096], first[4096:], environment]
+                transport.read.side_effect = [chunk if mode == "SPINOR" else chunk.ljust(4096, b"\xff") for chunk in chunks]
+                with patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
+                    writer = nuwriter.Nuc980Writer(self.config(mode), transport)
+                    writer.verify_pack(prepared)
+                expected_header = writer.header(7, file_length=len(first), kind=0, offset=0x100000, number=2)
+                self.assertEqual(transport.write.call_args_list[0].args, (expected_header,))
+                self.assertEqual(transport.expect.call_count, 3)
+                acknowledgement = {"NAND": 0x83, "SPINAND": 0x89, "SPINOR": 0x85, "SD": 0x85}[mode]
+                self.assertEqual(transport.expect.call_args.args, (acknowledgement,))
+                self.assertEqual([call.args[0] for call in transport.read.call_args_list],
+                                 [4096, 4, 3] if mode == "SPINOR" else [4096, 4096, 4096])
+                self.assertIn("100%", output.getvalue())
+
+    def test_pack_verify_loader_sends_ddr_length_and_skips_partition_metadata(self):
+        executable = b"boot code"
+        loader = b" TVN" + bytes(28) + struct.pack("<II", 0xAA55AA55, 2) + bytes(24) + executable
+        partition = nuwriter.partition_payload({"count": 1, "reserved_size": 8, "sizes": [0]})
+        prepared = self.prepared_pack([(0x400, 2, loader), (0xFFFFFFFF, 3, partition)])
+        transport = Mock()
+        transport.timeout = 10000
+        transport.read.return_value = executable.ljust(4096, b"\xff")
+        with patch.object(nuwriter.sys, "stdout", io.StringIO()):
+            writer = nuwriter.Nuc980Writer(self.config("SD"), transport)
+            writer.verify_pack(prepared)
+        self.assertEqual(transport.write.call_args_list[0].args,
+                         (writer.header(7, file_length=len(loader), kind=2, offset=0x400, number=1),))
+        self.assertEqual(transport.write.call_args_list[2].args, (struct.pack("<I", 32),))
+        self.assertEqual(transport.expect.call_count, 3)
+        self.assertEqual(transport.read.call_count, 1)
+        self.assertEqual(transport.read.call_args.args, (4096,))
+
+    def test_pack_verify_real_sample_loaders_match_raw_executables(self):
+        sample = Path(nuwriter.__file__).resolve().parent / "sample"
+        cases = (("SPINAND", "nuwriter-pack-spinand.bin", "u-boot-spl.bin"),
+                 ("SD", "nuwriter-pack-sd.bin", "u-boot-sd.bin"))
+        for mode, filename, source in cases:
+            with self.subTest(mode=mode):
+                header, payload, kind = nuwriter.parse_pack((sample / filename).read_bytes())[0]
+                offset = struct.unpack_from("<I", header, 4)[0]
+                expected = (sample / source).read_bytes()
+                prepared = self.prepared_pack([(offset, kind, payload)])
+                transport = Mock(timeout=10000)
+                transport.read.side_effect = [expected[index:index + 4096].ljust(4096, b"\xff")
+                                             for index in range(0, len(expected), 4096)]
+                with patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
+                    nuwriter.Nuc980Writer(self.config(mode), transport).verify_pack(prepared)
+                self.assertEqual(transport.write.call_args_list[2].args, (struct.pack("<I", 320),))
+                self.assertEqual(transport.read.call_count, (len(expected) + 4095) // 4096)
+                self.assertIn("100%", output.getvalue())
+
+    def test_pack_verify_mismatch_sends_zero_ack_and_never_completes(self):
+        prepared = self.prepared_pack([(0x100000, 0, b"expected")])
+        transport = Mock()
+        transport.timeout = 10000
+        transport.read.return_value = b"different".ljust(4096, b"\xff")
+        with patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
+            with self.assertRaisesRegex(nuwriter.NuWriterError, "image 0, data offset 0x0"):
+                nuwriter.Nuc980Writer(self.config("SPINAND"), transport).verify_pack(prepared)
+        self.assertEqual(transport.write.call_args_list[-1].args, (bytes(4),))
+        self.assertNotIn("100%", output.getvalue())
+
+    def test_pack_verify_timeout_stops_before_another_read(self):
+        prepared = self.prepared_pack([(0x100000, 0, b"data")])
+        transport = Mock()
+        writer = nuwriter.Nuc980Writer(self.config("SPINAND"), transport, operation_timeout=500)
+        with patch.object(nuwriter.time, "monotonic", side_effect=[0, 1]), \
+             patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
+            with self.assertRaisesRegex(nuwriter.NuWriterError, "Pack Verify timed out"):
+                writer.verify_pack(prepared)
+        transport.read.assert_not_called()
+        self.assertNotIn("100%", output.getvalue())
+
+    def test_pack_verify_bad_ack_stops_before_readback(self):
+        prepared = self.prepared_pack([(0x100000, 0, b"data")])
+        transport = Mock()
+        transport.expect.side_effect = nuwriter.NuWriterError("Unexpected ACK")
+        with self.assertRaisesRegex(nuwriter.NuWriterError, "Unexpected ACK"):
+            nuwriter.Nuc980Writer(self.config("SPINAND"), transport).verify_pack(prepared)
+        transport.read.assert_not_called()
+
+
+class MassProductionTests(unittest.TestCase):
+    def prepared(self):
+        data = struct.pack("<4I", 5, 0x10000, 1, 0xFFFFFFFF) + struct.pack("<4I", 3, 0, 0, 0xFFFFFFFF) + b"abc"
+        return nuwriter.PreparedImage(nuwriter.Image(Path("pack.bin"), 3, 0, 0), data, len(data))
+
+    def config(self, mode="SPINAND"):
+        config = fixture_config()
+        config.mode = mode
+        config.operation = "program_verify"
+        config.ini.remove_section("DDR")
+        return config
+
+    def test_mass_pack_single_board_executes_erase_burn_verify_protocol(self):
+        transport = Mock()
+        transport.timeout = 10000
+        transport.read_word.side_effect = [0x89, 8, 0, 7] + [0] * 5
+        transport.read.return_value = b"abc".ljust(4096, b"\xff")
+        writer = nuwriter.Nuc980Writer(self.config(), transport)
+        writer.info = {"spinand_page_size": 2048, "spinand_page_per_block": 64, "spinand_block_count": 8}
+        with patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
+            writer.run_mass_pack(self.prepared(), "2:4.2.2")
+        headers = [call.args[0] for call in transport.write.call_args_list if len(call.args[0]) == 56]
+        self.assertEqual([struct.unpack_from("<I", header)[0] for header in headers], [2, 5, 7])
+        events = [json.loads(line[3:]) for line in output.getvalue().splitlines() if line.startswith("MP ")]
+        self.assertEqual([event["stage"] for event in events if event["status"] == "Passed"],
+                         ["Prepare", "Erase", "Burn", "Verify", "Result"])
+        self.assertTrue(all(event["device"] == "2:4.2.2" for event in events))
+
+    def test_mass_pack_skips_separate_erase_for_spinor_and_sd(self):
+        for mode in ("SPINOR", "SD"):
+            with self.subTest(mode=mode):
+                writer = nuwriter.Nuc980Writer(self.config(mode), Mock())
+                writer.validate_write = Mock()
+                writer.erase = Mock()
+                writer.program_pack = Mock()
+                writer.verify_pack = Mock()
+                with patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
+                    writer.run_mass_pack(self.prepared(), "1:2")
+                writer.erase.assert_not_called()
+                writer.program_pack.assert_called_once()
+                writer.verify_pack.assert_called_once()
+                self.assertIn('"status": "Skipped"', output.getvalue())
+
+    def test_mass_pack_validation_or_erase_failure_never_starts_burning(self):
+        for stage in ("Prepare", "Erase"):
+            with self.subTest(stage=stage):
+                writer = nuwriter.Nuc980Writer(self.config(), Mock())
+                writer.validate_write = Mock(side_effect=nuwriter.NuWriterError("invalid capacity") if stage == "Prepare" else None)
+                writer.erase = Mock(side_effect=nuwriter.NuWriterError("erase failed") if stage == "Erase" else None)
+                writer.program_pack = Mock()
+                writer.verify_pack = Mock()
+                with patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
+                    with self.assertRaises(nuwriter.NuWriterError):
+                        writer.run_mass_pack(self.prepared(), "1:2")
+                writer.program_pack.assert_not_called()
+                writer.verify_pack.assert_not_called()
+                self.assertIn(f'"stage": "{stage}", "status": "Failed"', output.getvalue())
+
+    def test_mass_pack_cli_continues_next_board_after_failure(self):
+        devices = [SimpleNamespace(bus=1, port_numbers=(2,), address=2),
+                   SimpleNamespace(bus=1, port_numbers=(3,), address=3)]
+        config = SimpleNamespace(pack=False, initialize=False, all_devices=True, mode="SPINAND", operation="program_verify")
+        prepared = [self.prepared()]
+        sessions = [Mock(), Mock()]
+        writers = [Mock(), Mock()]
+        for writer in writers:
+            writer.get_info.return_value = {"nand_page_size": 2048, "spinand_page_size": 2048, "emmc_blocks": 0}
+        writers[0].run_mass_pack.side_effect = nuwriter.NuWriterError("first board failed")
+        with patch.object(nuwriter, "config_from_arguments", return_value=config), \
+             patch.object(nuwriter, "preflight", return_value=prepared), \
+             patch.object(nuwriter, "discover_devices", return_value=devices), \
+             patch.object(nuwriter, "UsbSession", side_effect=sessions) as session_class, \
+             patch.object(nuwriter, "Nuc980Writer", side_effect=writers), \
+             patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
+            session_class.device_identity.side_effect = lambda device: (device.bus, device.port_numbers)
+            self.assertEqual(nuwriter.main(["-m", "-w", "spinand", "pack.bin", "-o", "verify"]), 1)
+        writers[1].run_mass_pack.assert_called_once_with(prepared[0], "1:3")
+        for session in sessions:
+            session.close.assert_called_once()
+        self.assertIn('"device": "1:2", "stage": "Result", "status": "Failed"', output.getvalue())
 
 
 class WindowsDllPathTests(unittest.TestCase):
@@ -965,15 +1176,44 @@ class PackTests(unittest.TestCase):
             with self.assertRaises(nuwriter.NuWriterError):
                 nuwriter.parse_pack(invalid)
 
-    def test_pack_verify_is_rejected_before_usb_writes(self):
+    def test_invalid_pack_verify_is_rejected_before_usb_writes(self):
         config = self.config()
         config.operation = "program_verify"
         transport = Mock()
         image = nuwriter.Image(Path("pack.bin"), 3, 0, 0)
         prepared = nuwriter.PreparedImage(image, bytes(16), 16)
-        with self.assertRaisesRegex(nuwriter.NuWriterError, "program_verify"):
+        with self.assertRaisesRegex(nuwriter.NuWriterError, "Invalid NUC980 pack header"):
             nuwriter.Nuc980Writer(config, transport).program_pack(prepared)
         transport.write.assert_not_called()
+
+    def test_pack_program_verify_runs_burn_then_verify(self):
+        config = self.config("SPINAND")
+        config.operation = "program_verify"
+        config.ini.remove_section("DDR")
+        config.compatible = False
+        data = struct.pack("<4I", 5, 0x10000, 1, 0xFFFFFFFF) + struct.pack("<4I", 3, 0, 0, 0xFFFFFFFF) + b"abc"
+        prepared = nuwriter.PreparedImage(nuwriter.Image(Path("pack.bin"), 3, 0, 0), data, len(data))
+        transport = Mock()
+        transport.timeout = 10000
+        transport.read.return_value = b"abc".ljust(4096, b"\xff")
+        with patch.object(nuwriter.sys, "stdout", io.StringIO()):
+            nuwriter.Nuc980Writer(config, transport).run([prepared])
+        headers = [call.args[0] for call in transport.write.call_args_list if len(call.args[0]) == 56]
+        self.assertEqual([struct.unpack_from("<I", header)[0] for header in headers], [5, 7])
+        self.assertEqual(transport.read.call_count, 1)
+        self.assertEqual(transport.read.call_args.args, (4096,))
+
+    def test_pack_verify_cli_accepts_valid_pack_in_offline_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pack = Path(directory) / "pack.bin"
+            pack.write_bytes(struct.pack("<4I", 5, 0x10000, 1, 0xFFFFFFFF) +
+                             struct.pack("<4I", 3, 0, 0, 0xFFFFFFFF) + b"abc")
+            with patch.object(nuwriter, "discover_devices") as discover, \
+                 patch.object(nuwriter, "run_pre_attach_hook") as hook, \
+                 patch.object(nuwriter.sys, "stdout", io.StringIO()):
+                self.assertEqual(nuwriter.main(["-w", "spinand", str(pack), "-o", "verify", "--check"]), 0)
+                discover.assert_not_called()
+                hook.assert_not_called()
 
     def test_nand_pack_has_child_header_and_completion_ack(self):
         config = self.config("NAND")

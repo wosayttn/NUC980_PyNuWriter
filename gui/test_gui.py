@@ -36,8 +36,9 @@ class CommandTests(unittest.TestCase):
                 image = backend.ImageEntry(str(self.image), kind="Pack")
                 command = backend.program(self.target, media, image)
                 self.assertEqual(command.arguments[:3], ["-w", backend.MEDIA[media], str(self.image)])
-                with self.assertRaises(ValueError):
-                    backend.program(self.target, media, image, verify=True)
+                verified = backend.program(self.target, media, image, verify=True)
+                self.assertIn("-o", verified.arguments)
+                self.assertEqual(verified.arguments[verified.arguments.index("-o") + 1], "verify")
 
     def test_loader_address_and_ddr(self):
         for media, offset in (("SPI NAND", "0"), ("SD/eMMC", "0x400")):
@@ -592,17 +593,45 @@ class QtTests(unittest.TestCase):
         self.assertEqual(output.at(0), ["SPINAND [#####-----]  50%"])
         self.assertEqual(progress.at(0), [50])
 
+    def test_usb_trace_device_paths_precede_directions_without_changing_colors_or_rows(self):
+        window = self.window()
+        window.trace_button.click()
+        indent = " " * len("[2:4.2.2] <D->H> ")
+        records = [
+            ("USB (2:4.2.2) CONTROL OUT request=0xb0 value=0x0080 index=0 length=0",
+             "[2:4.2.2] <H->D> CONTROL OUT request=0xb0 value=0x0080 index=0 length=0", "#5aa5ff"),
+            ("USB (2:4.2.2) CONTROL IN completed length=2 data=80 00",
+             "[2:4.2.2] <D->H> CONTROL IN completed length=2\n" + indent + "80 00", "#56dce5"),
+            ("USB (2:4.2.3) BULK OUT endpoint=0x02 length=17 data=" + bytes(range(17)).hex(" "),
+             "[2:4.2.3] <H->D> BULK OUT endpoint=0x02 length=17\n" + indent + bytes(range(16)).hex(" ") + "\n" + indent + "10", "#f3c969"),
+            ("USB (2:4.2.3) BULK IN endpoint=0x81 length=4 timeout=10000 ms",
+             "[2:4.2.3] <D->H> BULK IN endpoint=0x81 length=4 timeout=10000 ms", "#74db98"),
+        ]
+        for raw, expected, color in records:
+            window.runner.parse(raw[:12])
+            window.runner.parse(raw[12:] + "\n")
+        self.assertEqual(window.trace_window.log.toPlainText(), "\n".join(record[1] for record in records))
+        block = window.trace_window.log.document().firstBlock()
+        for raw, expected, color in records:
+            for line in expected.split("\n"):
+                self.assertEqual(block.text(), line)
+                self.assertEqual(block.begin().fragment().charFormat().foreground().color().name(), color)
+                block = block.next()
+        self.assertEqual(window.log.toPlainText(), "")
+        self.assertEqual(window.collected, [])
+
     def test_usb_trace_transactions_have_direction_colors_and_keep_literal_text(self):
         window = self.window()
         window.trace_button.click()
+        indent = " " * len("<D->H> ")
         records = [
-            ("USB CONTROL OUT request=0xb0 value=0x0089", "H->D CONTROL OUT request=0xb0 value=0x0089", "#5aa5ff"),
-            ("USB CONTROL OUT completed", "H->D CONTROL OUT completed", "#5aa5ff"),
-            ("USB CONTROL IN completed length=2 data=89 00", "D->H CONTROL IN completed length=2 data=\n     89 00", "#56dce5"),
-            ("USB BULK OUT endpoint=0x02 length=4 data=01 02 03 04", "H->D BULK OUT endpoint=0x02 length=4 data=\n     01 02 03 04", "#f3c969"),
-            ("USB BULK OUT completed length=4", "H->D BULK OUT completed length=4", "#f3c969"),
-            ("USB BULK IN endpoint=0x81 length=4 timeout=10000 ms", "D->H BULK IN endpoint=0x81 length=4 timeout=10000 ms", "#74db98"),
-            ("USB BULK IN completed length=4 data=89 00 00 00", "D->H BULK IN completed length=4 data=\n     89 00 00 00", "#74db98"),
+            ("USB CONTROL OUT request=0xb0 value=0x0089", "<H->D> CONTROL OUT request=0xb0 value=0x0089", "#5aa5ff"),
+            ("USB CONTROL OUT completed", "<H->D> CONTROL OUT completed", "#5aa5ff"),
+            ("USB CONTROL IN completed length=2 data=89 00", "<D->H> CONTROL IN completed length=2\n" + indent + "89 00", "#56dce5"),
+            ("USB BULK OUT endpoint=0x02 length=4 data=01 02 03 04", "<H->D> BULK OUT endpoint=0x02 length=4\n" + indent + "01 02 03 04", "#f3c969"),
+            ("USB BULK OUT completed length=4", "<H->D> BULK OUT completed length=4", "#f3c969"),
+            ("USB BULK IN endpoint=0x81 length=4 timeout=10000 ms", "<D->H> BULK IN endpoint=0x81 length=4 timeout=10000 ms", "#74db98"),
+            ("USB BULK IN completed length=4 data=89 00 00 00", "<D->H> BULK IN completed length=4\n" + indent + "89 00 00 00", "#74db98"),
             ("USB diagnostic <literal> & text", "diagnostic <literal> & text", "#e6e6e6"),
         ]
         for raw, expected, color in records:
@@ -623,7 +652,19 @@ class QtTests(unittest.TestCase):
         self.assertEqual(popup.log.toPlainText(), expected_text)
         self.assertTrue(popup.log.isReadOnly())
 
-    def test_usb_trace_data_rows_have_16_bytes_and_five_space_indent(self):
+    def test_usb_trace_ff_preview_matches_requested_format(self):
+        window = self.window()
+        window.trace_button.click()
+        payload = " ".join(["ff"] * 64)
+        window.runner.parse("USB (2:4.2.2) BULK IN completed length=4096 data=" + payload + " ...\n")
+        indent = " " * len("[2:4.2.2] <D->H> ")
+        row = indent + " ".join(["ff"] * 16)
+        expected = "[2:4.2.2] <D->H> BULK IN completed length=4096\n" + "\n".join([row] * 4 + [indent + "..."])
+        self.assertEqual(window.trace_window.log.toPlainText(), expected)
+        self.assertNotIn("data=", expected)
+        self.assertEqual(window.log.toPlainText(), "")
+
+    def test_usb_trace_data_rows_have_16_bytes_and_transaction_aligned_indent(self):
         window = self.window()
         window.trace_button.click()
         popup = window.trace_window
@@ -635,18 +676,35 @@ class QtTests(unittest.TestCase):
                 preview = payload.hex(" ") + (" ..." if truncated else "")
                 window.runner.parse(f"USB BULK OUT endpoint=0x02 length=4096 data={preview}\n")
                 lines = popup.log.toPlainText().split("\n")
-                self.assertEqual(lines[0], "H->D BULK OUT endpoint=0x02 length=4096 data=")
-                expected_rows = ["     " + payload[offset:offset + 16].hex(" ")
-                                 for offset in range(0, size, 16)] or ["     "]
+                self.assertEqual(lines[0], "<H->D> BULK OUT endpoint=0x02 length=4096")
+                indent = " " * len("<H->D> ")
+                expected_rows = [indent + payload[offset:offset + 16].hex(" ")
+                                 for offset in range(0, size, 16)] or [indent]
                 if truncated:
-                    expected_rows[-1] += " ..."
+                    expected_rows.append(indent + "...")
                 self.assertEqual(lines[1:], expected_rows)
-                self.assertEqual(len(lines) - 1, max(1, (size + 15) // 16))
+                self.assertEqual(len(lines) - 1, max(1, (size + 15) // 16) + int(truncated))
                 block = popup.log.document().firstBlock()
                 while block.isValid():
                     if block.text().strip():
                         self.assertEqual(block.begin().fragment().charFormat().foreground().color().name(), "#f3c969")
                     block = block.next()
+
+    def test_usb_trace_payload_and_ellipsis_align_with_all_transaction_names(self):
+        window = self.window()
+        window.trace_button.click()
+        popup = window.trace_window
+        for device in ("", "2:4.2.2", "12:10.4.2.12"):
+            for transaction in popup.transaction_styles:
+                with self.subTest(device=device, transaction=transaction):
+                    popup.log.clear()
+                    origin = f"({device}) " if device else ""
+                    window.runner.parse("USB " + origin + transaction + " length=4096 data=" + bytes(range(17)).hex(" ") + " ...\n")
+                    lines = popup.log.toPlainText().splitlines()
+                    column = lines[0].index(transaction)
+                    for line in lines[1:]:
+                        self.assertEqual(len(line) - len(line.lstrip(" ")), column)
+                    self.assertEqual(lines[-1], " " * column + "...")
 
     def test_usb_trace_popup_visibility_controls_recording_and_works_while_busy(self):
         with patch.object(app.BackendRunner, "start") as start:
@@ -685,7 +743,7 @@ class QtTests(unittest.TestCase):
             window.set_busy(True)
             self.assertTrue(window.trace_button.isEnabled())
             window.trace_button.click()
-            self.assertIn("D->H BULK IN completed", popup.log.toPlainText())
+            self.assertIn("<D->H> BULK IN completed", popup.log.toPlainText())
             self.assertNotIn("hidden", popup.log.toPlainText())
             self.assertEqual(len(window.findChildren(app.USBTraceWindow)), 1)
             popup.reject()
@@ -701,7 +759,7 @@ class QtTests(unittest.TestCase):
             window.close()
             self.assertFalse(popup.isVisible())
             self.assertFalse(window.trace_button.isChecked())
-            self.assertIn("D->H BULK IN completed", popup.log.toPlainText())
+            self.assertIn("<D->H> BULK IN completed", popup.log.toPlainText())
             start.assert_not_called()
 
     def test_usb_trace_stays_separate_when_progress_has_no_newline(self):
@@ -739,7 +797,7 @@ class QtTests(unittest.TestCase):
         values = [progress.at(index)[0] for index in range(progress.count())]
         for value in percentages + [100]:
             self.assertIn(value, values)
-        self.assertEqual(window.trace_window.log.toPlainText().count("H->D CONTROL OUT"), len(progress_lines))
+        self.assertEqual(window.trace_window.log.toPlainText().count("<H->D> CONTROL OUT"), len(progress_lines))
 
     def test_usb_trace_subprocess_stderr_is_routed_to_its_window(self):
         window = self.window()
@@ -749,16 +807,16 @@ class QtTests(unittest.TestCase):
         self.runner.output.connect(window.append_output)
         command = FakeCommand(self.root / "trace.txt")
         code = ("import sys; "
-                "print('USB CONTROL OUT completed', file=sys.stderr, flush=True); "
-                "print('USB BULK IN completed length=4 data=89 00 00 00', file=sys.stderr, flush=True); "
+            "print('USB (2:4.2.2) CONTROL OUT completed', file=sys.stderr, flush=True); "
+            "print('USB (2:4.2.2) BULK IN completed length=4 data=89 00 00 00', file=sys.stderr, flush=True); "
                 "print('Payload completed', flush=True)")
         command.invocation = lambda check=False: [sys.executable, "-u", "-c", code]
         done = QSignalSpy(self.runner.finished)
         self.runner.start(command, preflight=False)
         self.wait_finished(done)
         self.assertTrue(done.at(0)[0])
-        self.assertIn("H->D CONTROL OUT completed", window.trace_window.log.toPlainText())
-        self.assertIn("D->H BULK IN completed", window.trace_window.log.toPlainText())
+        self.assertIn("[2:4.2.2] <H->D> CONTROL OUT completed", window.trace_window.log.toPlainText())
+        self.assertIn("[2:4.2.2] <D->H> BULK IN completed", window.trace_window.log.toPlainText())
         self.assertIn("Payload completed", window.log.toPlainText())
         self.assertNotIn("USB ", window.log.toPlainText())
         self.assertNotIn("BULK IN", "\n".join(window.collected))
@@ -863,8 +921,8 @@ class QtTests(unittest.TestCase):
         self.application.processEvents()
         self.assertEqual(scrollbar.value(), scrollbar.maximum())
         self.assertEqual(popup.log.document().blockCount(), 60)
-        self.assertNotIn("data=00000000", popup.log.toPlainText())
-        self.assertTrue(popup.log.toPlainText().endswith("D->H BULK IN completed data=\n     latest"))
+        self.assertNotIn("\n" + " " * len("<D->H> ") + "00000000", popup.log.toPlainText())
+        self.assertTrue(popup.log.toPlainText().endswith("<D->H> BULK IN completed\n" + " " * len("<D->H> ") + "latest"))
 
     def window(self):
         window = app.MainWindow(settings_path=self.root / "settings.json")
@@ -1758,6 +1816,49 @@ class QtTests(unittest.TestCase):
             self.assertFalse(window.devices.isEnabled())
             start.assert_not_called()
 
+    def test_mass_production_results_show_individual_stage_and_failure_details(self):
+        window = self.window()
+        events = [
+            {"device": "1:2", "stage": "Prepare", "status": "Pending"},
+            *[{"device": "1:2", "stage": stage, "status": "Passed"} for stage in ("Erase", "Burn", "Verify", "Result")],
+            {"device": "1:3", "stage": "Prepare", "status": "Pending"},
+            {"device": "1:3", "stage": "Erase", "status": "Skipped"},
+            {"device": "1:3", "stage": "Burn", "status": "Failed", "detail": "USB write timed out"},
+            {"device": "1:3", "stage": "Result", "status": "Failed", "detail": "USB write timed out"},
+        ]
+        for event in events:
+            window.runner.parse("MP " + json.dumps(event) + "\n")
+        results = window.mass.results
+        self.assertEqual(results.rowCount(), 2)
+        self.assertEqual([results.item(0, column).text() for column in range(5)], ["1:2", "Passed", "Passed", "Passed", "Passed"])
+        self.assertEqual([results.item(1, column).text() for column in range(5)], ["1:3", "Skipped", "Failed", "Not run", "Failed"])
+        self.assertEqual(results.item(1, 4).foreground().color().name(), "#c62828")
+        self.assertEqual(results.item(1, 4).toolTip(), "USB write timed out")
+        self.assertIn("Passed: 1  Failed: 1  Pending: 0", window.mass.summary.text())
+        self.assertNotIn("MP {", window.log.toPlainText())
+        self.assertIn("Device 1:3 Burn: Failed", window.log.toPlainText())
+
+    def test_mass_production_program_requests_verify_and_confirmation(self):
+        window = self.window()
+        window.media.setCurrentText("Mass Production")
+        pack = self.root / "pack.bin"
+        pack.write_bytes(b"simulated pack")
+        window.mass.filename.setText(str(pack))
+        with patch.object(window.runner, "start") as start, \
+             patch.object(app.QMessageBox, "warning", return_value=QMessageBox.StandardButton.Yes) as warning:
+            window.mass.program()
+        command = start.call_args.args[0]
+        self.assertIn("-m", command.arguments)
+        self.assertEqual(command.arguments[command.arguments.index("-o") + 1], "verify")
+        self.assertIn("Erase All", warning.call_args.args[2])
+        self.assertTrue(command.label.endswith("mass production"))
+        window.mass.update_result({"device": "1:2", "stage": "Result", "status": "Passed"})
+        with patch.object(window.runner, "start") as start, \
+             patch.object(app.QMessageBox, "warning", return_value=QMessageBox.StandardButton.No):
+            window.mass.program()
+        start.assert_not_called()
+        self.assertEqual(window.mass.results.rowCount(), 1)
+
     def test_gui_has_no_check_only_and_requires_hardware_confirmation(self):
         window = self.window()
         self.assertFalse(hasattr(window, "check_only"))
@@ -1859,15 +1960,15 @@ class QtTests(unittest.TestCase):
         self.assertFalse(snapshot.exists())
 
     def test_real_backend_check_for_all_media_attach_and_ram(self):
-        image = self.root / "data.bin"
-        image.write_bytes(b"data")
+        sample = backend.ROOT / "sample"
+        image = sample / "u-boot-spinand.bin"
+        self.assertTrue(image.is_file(), "Commit sample images with the integration tests")
         target = backend.Target(str(backend.ROOT / "sys_cfg" / "NUC980DK71YC.ini"))
-        commands = [backend.attach(target), backend.download(target, image, "0x8000")]
+        commands = [backend.attach(target), backend.download(target, image, "0xe00000"),
+                    backend.download(target, sample / "uImage", "0x8000",
+                                     dtb=str(sample / "nuc980-iot-128m-bmc.dtb"))]
         for media in ("NAND", "SPI NAND", "SPI NOR", "SD/eMMC"):
             commands.append(backend.program(target, media, backend.ImageEntry(str(image))))
-        config = self.root / "config.json"
-        config.write_text(json.dumps({"mode": "spinand", "image": [{"file": image.name, "offset": 0, "type": "data"}]}))
-        commands.append(backend.pack(config, self.root / "output.bin", "SPI NAND"))
         format_ini = self.root / "format.ini"
         format_ini.write_text(backend.format_configuration(target, 32, [128, 0]))
         commands.append(backend.Command([str(format_ini)], label="Format check"))
@@ -1878,7 +1979,46 @@ class QtTests(unittest.TestCase):
                 self.runner.start(check_command, preflight=False)
                 self.wait_finished(done)
                 self.assertTrue(done.at(0)[0], done.at(0)[1])
-        self.assertFalse((self.root / "output.bin").exists())
+
+    def test_real_backend_check_for_sample_spinand_and_sd1_templates(self):
+        sample = backend.ROOT / "sample"
+        target = backend.Target(str(backend.ROOT / "sys_cfg" / "NUC980DK71YC.ini"))
+        cases = (("SPI NAND", "config_spinand.json", "nuwriter-pack-spinand.bin", "spinand"),
+                 ("SD/eMMC", "config_sd1.json", "nuwriter-pack-sd.bin", "sd"))
+        for media, filename, packed, mode in cases:
+            with self.subTest(media=media):
+                config = sample / filename
+                original = config.read_bytes()
+                document = json.loads(original)
+                self.assertEqual(document["mode"], mode)
+                self.assertEqual(document["ddr"], "../sys_cfg/NUC980DK71YC.ini")
+                for image in document["image"]:
+                    if "file" in image:
+                        self.assertTrue((sample / image["file"]).is_file(), image["file"])
+                if mode == "sd":
+                    loader = document["image"][0]
+                    self.assertEqual(loader["offset"], "0x400")
+                    self.assertEqual(loader["exec_addr"], "0xe00000")
+                    self.assertEqual(document["image"][-1]["partition"], {"count": 1, "reserved_size": 8, "sizes": [0]})
+                output = self.root / f"{mode}-pack.bin"
+                commands = [backend.pack(config, output, media),
+                            backend.program(target, media, backend.ImageEntry(str(sample / packed), "Pack"), verify=True)]
+                for command in commands:
+                    done = QSignalSpy(self.runner.finished)
+                    check_command = backend.Command(command.arguments + ["--check"], cwd=command.cwd, label=command.label)
+                    self.runner.start(check_command, preflight=False)
+                    self.wait_finished(done)
+                    self.assertTrue(done.at(0)[0], done.at(0)[1])
+                self.assertFalse(output.exists())
+                self.assertEqual(config.read_bytes(), original)
+
+    def test_sample_directory_contains_only_referenced_fixtures(self):
+        sample = backend.ROOT / "sample"
+        used = {"README.md", "config_spinand.json", "config_sd1.json", "nuwriter-pack-spinand.bin", "nuwriter-pack-sd.bin"}
+        for filename in ("config_spinand.json", "config_sd1.json"):
+            document = json.loads((sample / filename).read_text(encoding="utf-8"))
+            used.update(image["file"] for image in document["image"] if "file" in image)
+        self.assertEqual({path.name for path in sample.iterdir() if path.is_file()}, used)
 
 
 if __name__ == "__main__":

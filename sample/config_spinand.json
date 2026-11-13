@@ -1,0 +1,45 @@
+{
+    "mode": "spinand",
+    "ddr": "../sys_cfg/NUC980DK71YC.ini",
+    "output": "nuwriter-pack-spinand.bin",
+    "image": [
+        {
+            "file": "u-boot-spl.bin",
+            "offset": "0x0",
+            "type": "loader",
+            "exec_addr": "0x200",
+            "page_size": "0x800",
+            "spare_area": "0x40",
+            "quad_read_cmd": "0x6b",
+            "read_status_cmd": "0x0f",
+            "write_status_cmd": "0x1f",
+            "status_value": "0x18",
+            "dummy_byte": "0x1"
+        },
+        {
+            "file": "uboot-env-spinand.txt",
+            "offset": "0x80000",
+            "type": "env"
+        },
+        {
+            "file": "u-boot-spinand.bin",
+            "offset": "0x100000",
+            "type": "data"
+        },
+        {
+            "file": "nuc980-iot-128m-bmc.dtb",
+            "offset": "0x180000",
+            "type": "data"
+        },
+        {
+            "file": "uImage",
+            "offset": "0x200000",
+            "type": "linux"
+        },
+        {
+            "file": "obmc-phosphor-image-numaker-iot-nuc980g2.ubi",
+            "offset": "0x800000",
+            "type": "data"
+        }
+    ]
+}

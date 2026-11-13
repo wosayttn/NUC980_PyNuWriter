@@ -1,0 +1,10 @@
+baudrate=115200
+bootdelay=1
+watchdog=0
+stderr=serial
+stdin=serial
+stdout=serial
+bootargs=noinitrd ubi.mtd=3 root=ubi0:rootfs rootfstype=ubifs rw console=ttyS0,115200n8 init=/sbin/init mem=128M
+loadkernel=nand read 0x8000 0x200000 0x600000
+loaddtb=nand read 0x1400000 0x180000 0x8000
+bootcmd=run loadkernel; run loaddtb; bootm 0x8000 - 0x1400000
