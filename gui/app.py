@@ -1248,6 +1248,7 @@ class MainWindow(QMainWindow):
         self.media = QComboBox()
         self.media.addItems(["SDRAM", "SPI NOR", "NAND", "SD/eMMC", "SPI NAND", "Pack", "Mass Production"])
         self.media.setCurrentText("SDRAM")
+        self.media.setFixedWidth((self.media.sizeHint().width() * 5 + 3) // 4)
         target_row.addWidget(self.media)
         target_row.addWidget(QLabel("DDR Init:"))
         self.ddr = QComboBox()

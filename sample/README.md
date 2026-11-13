@@ -19,6 +19,10 @@ SPI NAND and SD packs. The SD1 template generates a backend partition record
 rather than copying the supplied pack's raw MBR. Offline validation is not a
 real-board boot test; verify the board, boot mode, and media before programming.
 
+`zImage` is the raw ARM Linux kernel used by RAM-download integration tests.
+`uImage` includes a U-Boot image header and remains the kernel input in the
+flash-pack templates. Do not execute `uImage` directly as a raw kernel.
+
 Run from the `sample` directory. The GUI uses the JSON directory as the
 working directory automatically:
 

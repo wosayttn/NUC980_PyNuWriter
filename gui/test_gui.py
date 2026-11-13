@@ -12,7 +12,7 @@ import backend
 class CommandTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="nuwriter gui ! ")
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.image = self.root / "image !.bin"
         self.image.write_bytes(b"data")
         self.ddr = self.root / "DDR.ini"
@@ -177,7 +177,7 @@ class QtTests(unittest.TestCase):
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="nuwriter Qt ! ")
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.windows = []
         self.runner = app.BackendRunner()
         serial_guard = patch.object(console.serial, "Serial", side_effect=AssertionError("Real serial access is forbidden in GUI tests"))
@@ -1674,6 +1674,26 @@ class QtTests(unittest.TestCase):
         self.assertIsNone(window.console_window)
         self.assertFalse(window.runner.busy)
 
+    def test_choose_type_is_25_percent_wider_and_ddr_uses_remaining_space(self):
+        window = self.window()
+        window.show()
+        self.application.processEvents()
+        expected = (window.media.sizeHint().width() * 5 + 3) // 4
+        previous_ddr_width = None
+        for width in (780, 800, 960):
+            with self.subTest(width=width):
+                window.resize(width, 560)
+                self.application.processEvents()
+                self.assertEqual(window.width(), width)
+                self.assertEqual(window.media.width(), expected)
+                self.assertGreater(window.ddr.geometry().left(), window.media.geometry().right())
+                self.assertGreater(window.reconnect_button.geometry().left(), window.ddr.geometry().right())
+                self.assertTrue(window.controls.rect().contains(window.reconnect_button.geometry().bottomRight()))
+                if previous_ddr_width is not None:
+                    self.assertEqual(window.ddr.width() - previous_ddr_width, width - previous_width)
+                previous_ddr_width = window.ddr.width()
+                previous_width = width
+
     def test_default_window_size_is_800_by_560_for_all_pages(self):
         window = self.window()
         window.show()
@@ -1964,9 +1984,12 @@ class QtTests(unittest.TestCase):
         image = sample / "u-boot-spinand.bin"
         self.assertTrue(image.is_file(), "Commit sample images with the integration tests")
         target = backend.Target(str(backend.ROOT / "sys_cfg" / "NUC980DK71YC.ini"))
+        kernel = sample / "zImage"
+        self.assertEqual(int.from_bytes(kernel.read_bytes()[36:40], "little"), 0x016F2818)
         commands = [backend.attach(target), backend.download(target, image, "0xe00000"),
-                    backend.download(target, sample / "uImage", "0x8000",
-                                     dtb=str(sample / "nuc980-iot-128m-bmc.dtb"))]
+                backend.download(target, kernel, "0x8000", execute=True,
+                         dtb=str(sample / "nuc980-iot-128m-bmc.dtb"),
+                         bootargs="noinitrd ubi.mtd=3 root=ubi0:rootfs rootfstype=ubifs rw console=ttyS0,115200n8")]
         for media in ("NAND", "SPI NAND", "SPI NOR", "SD/eMMC"):
             commands.append(backend.program(target, media, backend.ImageEntry(str(image))))
         format_ini = self.root / "format.ini"
@@ -2014,7 +2037,7 @@ class QtTests(unittest.TestCase):
 
     def test_sample_directory_contains_only_referenced_fixtures(self):
         sample = backend.ROOT / "sample"
-        used = {"README.md", "config_spinand.json", "config_sd1.json", "nuwriter-pack-spinand.bin", "nuwriter-pack-sd.bin"}
+        used = {"README.md", "config_spinand.json", "config_sd1.json", "nuwriter-pack-spinand.bin", "nuwriter-pack-sd.bin", "zImage"}
         for filename in ("config_spinand.json", "config_sd1.json"):
             document = json.loads((sample / filename).read_text(encoding="utf-8"))
             used.update(image["file"] for image in document["image"] if "file" in image)

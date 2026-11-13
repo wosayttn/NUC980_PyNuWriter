@@ -406,7 +406,7 @@ class CH341ResetTests(unittest.TestCase):
 class PreAttachHookTests(unittest.TestCase):
     def test_external_hook_uses_current_python_and_script_directory(self):
         with tempfile.TemporaryDirectory(prefix="nuwriter hook ") as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             hook = root / "pre-attach-hook.py"
             hook.write_text("raise SystemExit(0)\n", encoding="ascii")
             with patch.object(nuwriter, "__file__", str(root / "nuwriter.py")), \
@@ -460,7 +460,7 @@ class PreAttachHookTests(unittest.TestCase):
 
     def test_manual_reset_hook_accepts_missing_adapter_from_real_subprocess(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             hook = root / "pre-attach-hook.py"
             hook.write_bytes(Path(__file__).with_name("pre-attach-hook.py").read_bytes())
             (root / "ch341_reset_uart.py").write_text(
@@ -1832,7 +1832,7 @@ class DramDownloadTests(unittest.TestCase):
 
     def test_bootargs_override_changes_downloaded_copy_not_source_dtb(self):
         from pyfdt.pyfdt import FdtBlobParse
-        source = Path(__file__).resolve().parent.parent / "numaker-iot-nuc980g2" / "nuc980-iot-128m-bmc.dtb"
+        source = Path(__file__).resolve().parent / "sample" / "nuc980-iot-128m-bmc.dtb"
         original = source.read_bytes()
         bootargs = "noinitrd ubi.mtd=rofs root=ubi0:rootfs rootfstype=ubifs console=ttyS0,115200n8"
         patched = nuwriter.dtb_with_bootargs(original, bootargs)
