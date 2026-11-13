@@ -698,7 +698,8 @@ def run_pre_attach_hook():
     if not hook.is_file():
         return
     print(f"Running pre-attach hook: {hook}", flush=True)
-    result = subprocess.run([sys.executable, str(hook)], cwd=str(hook.parent), check=False)
+    arguments = ["--run-pre-attach-hook"] if getattr(sys, "frozen", False) else [str(hook)]
+    result = subprocess.run([sys.executable] + arguments, cwd=str(hook.parent), check=False)
     if result.returncode != 0:
         raise NuWriterError(f"Pre-attach hook failed with exit code {result.returncode}")
 
@@ -1694,6 +1695,25 @@ def do_pack(cfg_file, **settings):
 
 
 def main(argv=None):
+    arguments = sys.argv[1:] if argv is None else list(argv)
+    if getattr(sys, "frozen", False):
+        if arguments == ["--export-smoke-test"]:
+            for name in ("usb.core", "usb.util", "usb.backend.libusb1", "pyfdt.pyfdt", "serial.tools.list_ports"):
+                importlib.import_module(name)
+            print("Frozen backend imports validated; no USB or serial access")
+            return 0
+        if arguments == ["--run-pre-attach-hook"]:
+            import runpy
+            hook = Path(__file__).resolve().with_name("pre-attach-hook.py")
+            return runpy.run_path(str(hook))["main"]()
+        if arguments[:1] == ["--reset-ch341"]:
+            from ch341_reset_uart import main as reset_main
+            previous = sys.argv
+            try:
+                sys.argv = [sys.executable] + arguments[1:]
+                return reset_main()
+            finally:
+                sys.argv = previous
     parser = argparse.ArgumentParser(description="NUC980 NuWriter Python command tool")
     parser.add_argument("config", nargs="?", help="Pack/configuration file, or DDR settings with --attach")
     parser.add_argument("-a", "--attach", action="store_true", help="Initialize NUC980 DDR and load XUSB")
@@ -1724,7 +1744,6 @@ def main(argv=None):
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--check", action="store_true", help="Validate configuration and input files without USB or output writes")
     modes.add_argument("--list", action="store_true", help="List candidate USB devices without programming them")
-    arguments = sys.argv[1:] if argv is None else list(argv)
     if not arguments:
         parser.print_help()
         return 0

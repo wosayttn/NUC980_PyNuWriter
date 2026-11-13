@@ -6,7 +6,70 @@
 以及烧录 SD／eMMC。交互操作请参阅[桌面 GUI 指南](gui/README.zh-CN.md)，
 命令行操作可按照以下示例进行。
 
-## 安装
+## 下载独立执行版本
+
+独立封装的 CLI 与 GUI 不需要另外安装 Python。
+
+1. 在此 repository 打开 **Actions > Export > Run workflow**。推送 `v*` tag
+	也会触发 Export。
+2. 执行成功后，从 **Artifacts** 下载所需的 CLI 或 GUI。下载需要登录 GitHub，
+	产出物保留 30 天。
+
+| 平台 | CLI artifact | GUI artifact |
+| --- | --- | --- |
+| Windows x64 | `nuwriter-cli-windows-x64` | `nuwriter-gui-windows-x64` |
+| Linux x64 | `nuwriter-cli-linux-x64` | `nuwriter-gui-linux-x64` |
+| macOS Intel | `nuwriter-cli-macos-x64` | `nuwriter-gui-macos-x64` |
+| macOS Apple Silicon | `nuwriter-cli-macos-arm64` | `nuwriter-gui-macos-arm64` |
+
+每个 artifact 包含应用程序压缩包与 `.sha256` 校验文件。先解压下载的 artifact，
+再解压其中的 `.zip`（Windows）或 `.tar.gz`（Linux／macOS）。
+请保留完整应用程序目录，包括 `_internal` 与 `backend`；此版本采用自包含目录，
+不是单文件封装。GUI 已包含 CLI backend，不需要另外下载 CLI。
+
+macOS 解压后的 `nuwriter-gui` 目录内包含 `nuwriter-gui.app` 与同级的 `backend`。
+请保留两者，移动时须移动整个目录，不要只取出 `.app`。封装会保留 PyInstaller
+生成并签名的 app bundle，并在压缩前验证其签名。
+
+GUI 请打开 `nuwriter-gui.exe`、`nuwriter-gui` 或 `nuwriter-gui.app`。
+使用下方 CLI 示例时，请在解压后的 `nuwriter` 目录，将 `python nuwriter.py`
+改为 Windows 的 `.\nuwriter.exe` 或 Linux／macOS 的 `./nuwriter`。
+封装包含 DDR／XUSB 资源与第三方许可证文件，但不包含大型示例镜像，
+请另外从此 repository 下载示例文件。
+
+Windows 仍需安装 [NUC980 WinUSB 驱动程序](driver/README.zh-CN.md)；安装程序位于
+CLI 的 `_internal/driver`（GUI 封装内则位于 `backend/nuwriter` 下）。
+Linux 仍需 USB／串口权限与原生库，Debian／Ubuntu 可执行：
+
+```bash
+sudo apt-get install -y libusb-1.0-0 libegl1 libgl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3 fonts-noto-core
+```
+
+macOS 请安装与执行文件架构相同的 libusb：
+
+```bash
+brew install libusb
+```
+
+Linux 版本在 Ubuntu 22.04 构建，不支持更旧的 glibc 系统。macOS 版本在 macOS 15
+构建，更旧版本尚未验证。产出物没有开发者签名或公证，Windows／macOS 可能显示
+安全警告；打开前请确认来源与校验码。
+
+如需自行构建，请在目标操作系统启用 Python 3.14 环境后执行：
+
+```bash
+python -m pip install -r requirements-export.txt
+```
+
+```bash
+python export.py
+```
+
+压缩包与校验文件输出到 `dist/artifacts`。[Export workflow](.github/workflows/export.yml)
+会先执行测试；封装工具再解压 CLI／GUI 压缩包进行离线验证，不会访问 USB、串口、
+复位或烧录开发板，也不会发布 GitHub Releases。
+
+## 从源码安装
 
 命令行工具需要 Python 3.9 以上版本及 libusb-1.0。CI 使用 Python 3.14；
 GUI 请使用 PySide6 支持的 Python 版本。以下命令均从此 repository 目录执行。

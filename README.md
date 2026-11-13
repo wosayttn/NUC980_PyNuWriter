@@ -6,7 +6,75 @@ Cross-platform CLI and desktop GUI for NUC980 RAM downloads, NAND/SPI flash
 programming, and SD/eMMC programming. See the [desktop GUI guide](gui/README.md)
 for interactive use, or follow the CLI examples below.
 
-## Install
+## Standalone Downloads
+
+No Python installation is needed for the standalone CLI or GUI.
+
+1. Open this repository's **Actions > Export > Run workflow**. Export also runs
+	when a `v*` tag is pushed.
+2. After a successful run, download the desired CLI or GUI from **Artifacts**.
+	GitHub sign-in is required. Artifacts are retained for 30 days.
+
+| Platform | CLI artifact | GUI artifact |
+| --- | --- | --- |
+| Windows x64 | `nuwriter-cli-windows-x64` | `nuwriter-gui-windows-x64` |
+| Linux x64 | `nuwriter-cli-linux-x64` | `nuwriter-gui-linux-x64` |
+| macOS Intel | `nuwriter-cli-macos-x64` | `nuwriter-gui-macos-x64` |
+| macOS Apple Silicon | `nuwriter-cli-macos-arm64` | `nuwriter-gui-macos-arm64` |
+
+Each artifact contains an application archive and its `.sha256` checksum.
+Extract the artifact download, then extract the inner `.zip` (Windows) or
+`.tar.gz` (Linux/macOS). Keep the entire application directory together,
+including `_internal` and `backend`; these are self-contained directories,
+not single-file executables. The GUI already includes its CLI backend.
+
+On macOS, the extracted `nuwriter-gui` directory contains `nuwriter-gui.app`
+and the sibling `backend` directory. Keep both in that directory; move the
+whole directory, not just the `.app`. The app bundle is preserved as generated
+and signed by PyInstaller; export verifies its signature before archiving.
+
+Open `nuwriter-gui.exe`, `nuwriter-gui`, or `nuwriter-gui.app` for the GUI.
+For CLI examples below, replace `python nuwriter.py` with `.\nuwriter.exe`
+on Windows or `./nuwriter` on Linux/macOS, from the extracted `nuwriter`
+directory. DDR/XUSB resources and third-party licenses are included; large
+sample images are not. Download sample files separately from this repository.
+
+Windows still needs the [NUC980 WinUSB driver](driver/README.md); its installer
+is included under the CLI's `_internal/driver` directory (inside
+`backend/nuwriter` in the GUI package). Linux still needs USB/serial permissions
+and native libraries; for Debian/Ubuntu:
+
+```bash
+sudo apt-get install -y libusb-1.0-0 libegl1 libgl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3 fonts-noto-core
+```
+
+On macOS, install matching-architecture libusb:
+
+```bash
+brew install libusb
+```
+
+Linux exports are built on Ubuntu 22.04; older glibc systems are not supported.
+macOS exports are built on macOS 15; older releases are not verified. Builds
+are not developer-signed or notarized, so Windows/macOS may display security
+warnings. Verify the source and checksum before opening them.
+
+To build locally in an activated Python 3.14 environment on the target OS:
+
+```bash
+python -m pip install -r requirements-export.txt
+```
+
+```bash
+python export.py
+```
+
+Archives and checksums are written to `dist/artifacts`. The
+[Export workflow](.github/workflows/export.yml) runs tests before building;
+the exporter then verifies extracted CLI/GUI archives offline without USB,
+serial, reset, or flash operations. It does not publish GitHub Releases.
+
+## Install From Source
 
 The CLI requires Python 3.9+ and libusb-1.0. CI uses Python 3.14; use a Python
 version supported by PySide6 for the GUI. Run the following commands from this

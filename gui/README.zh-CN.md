@@ -5,9 +5,16 @@
 [主使用指南](../README.zh-CN.md) | [示例指南](../sample/README.zh-CN.md) | [驱动程序指南](../driver/README.zh-CN.md)
 
 现有 NuWriter backend 的跨平台 Qt 前端。主要布局包括 Choose type、DDR Init、
-Re-Connect、镜像列表、Parameters 与操作按钮。Backend 作为独立 Python 进程执行。
+Re-Connect、镜像列表、Parameters 与操作按钮。Backend 作为独立进程执行。
 
 ## 安装与启动
+
+独立版本请按照[下载指南](../README.zh-CN.md#下载独立执行版本)，
+选择 `nuwriter-gui-<platform>`，解压完整封装后打开 `nuwriter-gui.exe`（Windows）、
+`nuwriter-gui`（Linux）或 `nuwriter-gui.app`（macOS）。封装已包含 Python 与 CLI
+backend，请保留 `backend` 目录及内置资源；仍需安装原生 USB 驱动程序／库。
+
+如需从源码运行：
 
 从 `NUC980_PyNuWriter` 目录，使用你的 Python 环境执行：
 
@@ -23,7 +30,8 @@ Linux／macOS 如有需要可使用 `python3`。PySide6 需要桌面会话；Lin
 系统 libusb 与 Qt 平台库。Debian／Ubuntu 若提示缺少 xcb cursor 库，
 请安装 `libxcb-cursor0`。Windows 需要 NUC980 WinUSB 驱动程序；内置 DLL 需要 64-bit Python。
 
-GUI 与 backend 使用相同的 Python interpreter。启动 GUI 不会打开串口、扫描 USB、
+源码版本的 GUI 与 backend 使用相同的 Python interpreter；独立版本使用内置的
+CLI 执行文件。启动 GUI 不会打开串口、扫描 USB、
 复位开发板或写入 Flash。主窗口从屏幕可用区域左上角开始显示，没有 Help 菜单。
 更新后请重新安装 GUI requirements，包括 ANSI 终端处理所需的 `pyte`。
 

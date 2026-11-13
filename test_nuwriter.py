@@ -3,6 +3,7 @@ import json
 import mmap
 import os
 import runpy
+import shutil
 import struct
 import subprocess
 import sys
@@ -14,6 +15,106 @@ from unittest.mock import Mock, patch
 
 import nuwriter
 import ch341_reset_uart
+import export
+
+
+class ExportTests(unittest.TestCase):
+    def test_macos_export_preserves_app_bundle_and_keeps_cli_outside(self):
+        with tempfile.TemporaryDirectory(prefix="nuwriter macOS ! ") as temporary:
+            output = Path(temporary).resolve()
+
+            def freeze(directory, name, entry, gui=False):
+                if gui:
+                    (directory / "nuwriter-gui").mkdir()
+                    (directory / "nuwriter-gui" / "unbundled-executable").write_bytes(b"COLLECT output")
+                    bundle = directory / "nuwriter-gui.app"
+                    (bundle / "Contents" / "MacOS").mkdir(parents=True)
+                    (bundle / "Contents" / "MacOS" / "nuwriter-gui").write_bytes(b"GUI executable")
+                    (bundle / "Contents" / "Info.plist").write_bytes(b"Bundle metadata")
+                else:
+                    cli = directory / "nuwriter"
+                    cli.mkdir()
+                    (cli / "nuwriter").write_bytes(b"CLI executable")
+                    framework = cli / "_internal" / "Python.framework"
+                    framework.mkdir(parents=True)
+                    (framework / "Python").write_bytes(b"CLI framework")
+
+            def copy_licenses(directory, packages):
+                (directory / "licenses").mkdir(parents=True, exist_ok=True)
+
+            with patch.object(sys, "platform", "darwin"), \
+                 patch.object(export, "freeze", side_effect=freeze), \
+                 patch.object(export, "copy_licenses", side_effect=copy_licenses), \
+                 patch.object(export.subprocess, "run") as run:
+                export.build(output)
+            gui = output / "nuwriter-gui"
+            bundle = gui / "nuwriter-gui.app"
+            self.assertTrue(bundle.is_dir())
+            self.assertEqual({path.relative_to(bundle).as_posix() for path in bundle.rglob("*") if path.is_file()},
+                             {"Contents/Info.plist", "Contents/MacOS/nuwriter-gui"})
+            self.assertEqual((gui / "backend" / "nuwriter" / "nuwriter").read_bytes(), b"CLI executable")
+            self.assertTrue((gui / "licenses").is_dir())
+            self.assertFalse((gui / "unbundled-executable").exists())
+            self.assertEqual((bundle / "Contents" / "Info.plist").read_bytes(), b"Bundle metadata")
+            run.assert_called_once_with(["codesign", "--verify", "--deep", "--strict", str(bundle)], check=True)
+
+    def test_macos_archives_extract_app_and_sibling_backend(self):
+        with tempfile.TemporaryDirectory(prefix="nuwriter macOS archives ! ") as temporary:
+            output = Path(temporary).resolve()
+            cli = output / "nuwriter"
+            cli.mkdir()
+            (cli / "nuwriter").write_bytes(b"CLI executable")
+            gui = output / "nuwriter-gui"
+            bundle_executable = gui / "nuwriter-gui.app" / "Contents" / "MacOS" / "nuwriter-gui"
+            bundle_executable.parent.mkdir(parents=True)
+            bundle_executable.write_bytes(b"GUI executable")
+            shutil.copytree(cli, gui / "backend" / "nuwriter")
+            checked = []
+
+            def smoke(directory, gui=False):
+                if gui:
+                    self.assertEqual((export.gui_directory(directory) / "nuwriter-gui").read_bytes(), b"GUI executable")
+                    self.assertEqual((directory / "backend" / "nuwriter" / "nuwriter").read_bytes(), b"CLI executable")
+                else:
+                    self.assertEqual((directory / "nuwriter").read_bytes(), b"CLI executable")
+                checked.append(gui)
+
+            with patch.object(sys, "platform", "darwin"), \
+                 patch.object(export.platform, "machine", return_value="arm64"), \
+                 patch.object(export, "smoke", side_effect=smoke):
+                export.archive(output)
+            self.assertEqual(checked, [False, True])
+            self.assertEqual({path.name for path in (output / "artifacts").glob("*.tar.gz")},
+                             {"nuwriter-cli-macos-arm64.tar.gz", "nuwriter-gui-macos-arm64.tar.gz"})
+
+    def test_freezer_uses_local_usb_hook_and_platform_resources(self):
+        for system in ("win32", "linux", "darwin"):
+            for gui in (False, True):
+                with self.subTest(system=system, gui=gui), \
+                     patch.object(sys, "platform", system), \
+                     patch.object(export.subprocess, "run") as run:
+                    export.freeze(export.ROOT / "dist", "example", "gui/app.py" if gui else "nuwriter.py", gui=gui)
+                command = run.call_args.args[0]
+                self.assertIn(str(export.ROOT / "export-hooks"), command)
+                self.assertEqual(f"{export.ROOT / 'driver'}:driver" in command, system == "win32" and not gui)
+                self.assertIn("--windowed" if gui else "--console", command)
+                self.assertEqual(run.call_args.kwargs, {"cwd": export.ROOT, "check": True})
+
+    def test_usb_hook_only_declares_imports_without_scanning(self):
+        contents = runpy.run_path(str(export.ROOT / "export-hooks" / "hook-usb.py"))
+        self.assertIn("usb.backend.libusb1", contents["hiddenimports"])
+        self.assertNotIn("binaries", contents)
+
+    def test_frozen_dependency_check_does_not_discover_devices(self):
+        with patch.object(sys, "frozen", True, create=True), \
+             patch.object(nuwriter.importlib, "import_module") as load, \
+             patch.object(nuwriter, "discover_devices") as discover, \
+             patch.object(nuwriter, "run_pre_attach_hook") as hook:
+            self.assertEqual(nuwriter.main(["--export-smoke-test"]), 0)
+        self.assertEqual([call.args[0] for call in load.call_args_list],
+                         ["usb.core", "usb.util", "usb.backend.libusb1", "pyfdt.pyfdt", "serial.tools.list_ports"])
+        discover.assert_not_called()
+        hook.assert_not_called()
 
 
 def fixture_config(resource_dir=None):
@@ -404,6 +505,41 @@ class CH341ResetTests(unittest.TestCase):
 
 
 class PreAttachHookTests(unittest.TestCase):
+    def test_frozen_hook_relaunches_cli_without_python_script(self):
+        root = Path(nuwriter.__file__).resolve().parent
+        with patch.object(sys, "frozen", True, create=True), \
+             patch.object(nuwriter.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            nuwriter.run_pre_attach_hook()
+        run.assert_called_once_with([sys.executable, "--run-pre-attach-hook"], cwd=str(root), check=False)
+
+    def test_frozen_hook_dispatch_returns_hook_status(self):
+        hook_main = Mock(return_value=17)
+        with patch.object(sys, "frozen", True, create=True), \
+             patch.object(runpy, "run_path", return_value={"main": hook_main}) as load, \
+             patch.object(nuwriter, "discover_devices") as discover:
+            self.assertEqual(nuwriter.main(["--run-pre-attach-hook"]), 17)
+        load.assert_called_once_with(str(Path(nuwriter.__file__).resolve().with_name("pre-attach-hook.py")))
+        hook_main.assert_called_once_with()
+        discover.assert_not_called()
+
+    def test_frozen_reset_dispatch_preserves_arguments_and_status(self):
+        previous = sys.argv
+        with patch.object(sys, "frozen", True, create=True), \
+             patch.object(ch341_reset_uart, "main", side_effect=lambda: (self.assertEqual(sys.argv[1:], ["--duration", "0.8"]), 3)[1]), \
+             patch.object(nuwriter, "discover_devices") as discover:
+            self.assertEqual(nuwriter.main(["--reset-ch341", "--duration", "0.8"]), 3)
+        self.assertIs(sys.argv, previous)
+        discover.assert_not_called()
+
+    def test_frozen_reset_hook_uses_cli_and_skips_missing_adapter(self):
+        module = runpy.run_path(str(Path(__file__).with_name("pre-attach-hook.py")))
+        with patch.object(sys, "frozen", True, create=True), \
+             patch.object(nuwriter.subprocess, "run", return_value=SimpleNamespace(returncode=3)) as run, \
+             patch.object(nuwriter.time, "sleep") as sleep:
+            self.assertEqual(module["main"](), 0)
+        run.assert_called_once_with([sys.executable, "--reset-ch341", "--duration", "0.8"], check=False)
+        sleep.assert_not_called()
+
     def test_external_hook_uses_current_python_and_script_directory(self):
         with tempfile.TemporaryDirectory(prefix="nuwriter hook ") as directory:
             root = Path(directory).resolve()

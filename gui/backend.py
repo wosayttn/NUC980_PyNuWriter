@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 BACKEND = ROOT / "nuwriter.py"
 MEDIA = {"SDRAM": "ddr", "NAND": "nand", "SPI NOR": "spinor",
          "SPI NAND": "spinand", "SD/eMMC": "sd"}
@@ -79,7 +79,16 @@ class Command:
     label: str = "NuWriter"
 
     def invocation(self, check=False):
-        return [sys.executable, "-u", str(BACKEND)] + self.arguments + (["--check"] if check else [])
+        if getattr(sys, "frozen", False):
+            name = "nuwriter.exe" if sys.platform == "win32" else "nuwriter"
+            directory = Path(sys.executable).resolve().parent
+            if sys.platform == "darwin":
+                directory = directory.parent.parent.parent
+            executable = directory / "backend" / "nuwriter" / name
+            prefix = [str(executable)]
+        else:
+            prefix = [sys.executable, "-u", str(BACKEND)]
+        return prefix + self.arguments + (["--check"] if check else [])
 
 
 def attach(target):

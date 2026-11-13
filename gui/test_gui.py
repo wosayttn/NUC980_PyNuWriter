@@ -1,5 +1,6 @@
 import json
 import os
+import runpy
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,28 @@ class CommandTests(unittest.TestCase):
 
     def tearDown(self):
         self.directory.cleanup()
+
+    def test_source_invocation_uses_python(self):
+        with patch.object(sys, "frozen", False, create=True):
+            self.assertEqual(backend.Command(["--version"]).invocation(),
+                             [sys.executable, "-u", str(backend.BACKEND), "--version"])
+
+    def test_frozen_resources_use_bundle_root(self):
+        with patch.object(sys, "_MEIPASS", str(self.root), create=True):
+            module = runpy.run_path(str(Path(backend.__file__)))
+        self.assertEqual(module["ROOT"], self.root)
+
+    def test_frozen_invocation_uses_bundled_cli_without_python(self):
+        for platform, name in (("win32", "nuwriter.exe"), ("linux", "nuwriter"), ("darwin", "nuwriter")):
+            executable = (self.root / "nuwriter-gui.app" / "Contents" / "MacOS" / "nuwriter-gui"
+                          if platform == "darwin" else self.root / "nuwriter-gui")
+            with self.subTest(platform=platform), \
+                 patch.object(sys, "frozen", True, create=True), \
+                 patch.object(sys, "platform", platform), \
+                 patch.object(sys, "executable", str(executable)):
+                expected = self.root / "backend" / "nuwriter" / name
+                self.assertEqual(backend.Command(["--version"]).invocation(check=True),
+                                 [str(expected), "--version", "--check"])
 
     def test_program_is_not_an_attach_or_shell_command(self):
         command = backend.program(self.target, "SPI NAND", backend.ImageEntry(str(self.image), offset="0x100000"))

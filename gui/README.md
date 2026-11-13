@@ -6,9 +6,17 @@
 
 Cross-platform Qt frontend for the existing NuWriter backend. The main layout
 follows NuWriter's Choose type, DDR Init, Re-Connect, image list, Parameters,
-and operation buttons. The backend is run as a separate Python process.
+and operation buttons. The backend runs as a separate process.
 
 ## Install And Start
+
+For a standalone build, follow the [download guide](../README.md#standalone-downloads)
+and choose `nuwriter-gui-<platform>`. Extract the complete package, then open
+`nuwriter-gui.exe` (Windows), `nuwriter-gui` (Linux), or `nuwriter-gui.app`
+(macOS). Python and the CLI backend are included; keep the `backend` directory
+and bundled resources together. Native USB drivers/libraries are still required.
+
+For running from source:
 
 From the `NUC980_PyNuWriter` directory, using your Python environment:
 
@@ -25,7 +33,8 @@ Linux also needs its system libusb and Qt platform libraries. If Qt reports
 a missing xcb cursor library on Debian/Ubuntu, install `libxcb-cursor0`.
 Windows needs the NUC980 WinUSB driver and 64-bit Python for the bundled DLL.
 
-The GUI and backend use the same Python interpreter. Starting the GUI does
+Source builds use the same Python interpreter for the GUI and backend;
+standalone builds use their bundled CLI executable. Starting the GUI does
 not open serial ports, scan USB targets, reset the board, or write flash.
 The main window starts at the top-left of the screen's available area and has
 no Help menu. Reinstall the GUI requirements after updating to include `pyte`

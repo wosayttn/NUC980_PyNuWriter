@@ -6,7 +6,70 @@
 以及燒錄 SD／eMMC。互動操作請參閱[桌面 GUI 指南](gui/README.zh-TW.md)，
 命令列操作則可依照下列範例進行。
 
-## 安裝
+## 下載獨立執行版本
+
+獨立封裝的 CLI 與 GUI 不需要另外安裝 Python。
+
+1. 在此 repository 開啟 **Actions > Export > Run workflow**。推送 `v*` tag
+	也會觸發 Export。
+2. 執行成功後，從 **Artifacts** 下載所需的 CLI 或 GUI。下載需要登入 GitHub，
+	產出物保留 30 天。
+
+| 平台 | CLI artifact | GUI artifact |
+| --- | --- | --- |
+| Windows x64 | `nuwriter-cli-windows-x64` | `nuwriter-gui-windows-x64` |
+| Linux x64 | `nuwriter-cli-linux-x64` | `nuwriter-gui-linux-x64` |
+| macOS Intel | `nuwriter-cli-macos-x64` | `nuwriter-gui-macos-x64` |
+| macOS Apple Silicon | `nuwriter-cli-macos-arm64` | `nuwriter-gui-macos-arm64` |
+
+每個 artifact 包含應用程式壓縮檔與 `.sha256` 校驗檔。先解壓下載的 artifact，
+再解壓其中的 `.zip`（Windows）或 `.tar.gz`（Linux／macOS）。
+請保留完整應用程式目錄，包括 `_internal` 與 `backend`；此版本採自包含目錄，
+不是單一檔案封裝。GUI 已內含 CLI backend，不需要另外下載 CLI。
+
+macOS 解壓後的 `nuwriter-gui` 目錄內包含 `nuwriter-gui.app` 與同層的 `backend`。
+請保留兩者，移動時須移動整個目錄，不要只取出 `.app`。封裝會保留 PyInstaller
+產生並簽章的 app bundle，並在壓縮前驗證其簽章。
+
+GUI 請開啟 `nuwriter-gui.exe`、`nuwriter-gui` 或 `nuwriter-gui.app`。
+若使用下方 CLI 範例，請在解壓後的 `nuwriter` 目錄，將 `python nuwriter.py`
+改為 Windows 的 `.\nuwriter.exe` 或 Linux／macOS 的 `./nuwriter`。
+封裝內含 DDR／XUSB 資源與第三方授權文件，但不包含大型範例映像，
+請另外從此 repository 下載範例檔案。
+
+Windows 仍需安裝 [NUC980 WinUSB 驅動程式](driver/README.zh-TW.md)；安裝程式位於
+CLI 的 `_internal/driver`（GUI 封裝內則位於 `backend/nuwriter` 下）。
+Linux 仍需 USB／串口權限與原生函式庫，Debian／Ubuntu 可執行：
+
+```bash
+sudo apt-get install -y libusb-1.0-0 libegl1 libgl1 libxkbcommon0 libxcb-cursor0 libdbus-1-3 fonts-noto-core
+```
+
+macOS 請安裝與執行檔架構相同的 libusb：
+
+```bash
+brew install libusb
+```
+
+Linux 版本在 Ubuntu 22.04 建置，不支援更舊的 glibc 系統。macOS 版本在 macOS 15
+建置，更舊版本尚未驗證。產出物沒有開發者簽章或公證，Windows／macOS 可能顯示
+安全警告；開啟前請確認來源與校驗碼。
+
+若要自行建置，請在目標作業系統啟用 Python 3.14 環境後執行：
+
+```bash
+python -m pip install -r requirements-export.txt
+```
+
+```bash
+python export.py
+```
+
+壓縮檔與校驗檔輸出至 `dist/artifacts`。[Export workflow](.github/workflows/export.yml)
+會先執行測試；封裝工具再解壓 CLI／GUI 壓縮檔進行離線驗證，不會存取 USB、串口、
+重置或燒錄板子，也不會發佈 GitHub Releases。
+
+## 從原始碼安裝
 
 命令列工具需要 Python 3.9 以上版本及 libusb-1.0。CI 使用 Python 3.14；
 GUI 請使用 PySide6 支援的 Python 版本。下列命令均從此 repository 目錄執行。
