@@ -54,8 +54,11 @@ Initialize again after resetting or power-cycling. Subsequent commands below
 use the running XUSB. `--ddr` supplies DDR settings; it does not initialize.
 
 **Automatic reset:** if `pre-attach-hook.py` is present, `-a` runs it before
-connecting. The supplied hook resets through CH341. Rename the hook to disable
-it when no reset adapter is connected. Offline checks and packing do not reset.
+connecting. The supplied hook resets through CH341 when detected. Without a
+CH341 adapter, it prints a notice and skips automatic reset; manually reset
+the board into USB Boot mode before connecting. Errors opening or controlling
+a detected adapter still stop the operation. Offline checks and packing do not
+reset. The standalone reset helper returns exit code 3 when no CH341 is found.
 
 ## Program And Read Flash
 
@@ -173,6 +176,25 @@ Use `--device` with a path from `--list` when multiple boards are connected.
 For USB errors, append `--trace-usb 2> usb.log`; logs may contain image data.
 `--timeout` and `--operation-timeout` are in milliseconds. If erase times out,
 do not proceed to programming; wait for the board to stop and reinitialize.
+
+## Tests
+
+GitHub Actions runs backend and offscreen GUI tests with Python 3.14 on
+Windows, Ubuntu, and macOS for pushes, pull requests, and manual runs.
+Commit both test files together with the workflow. These tests use simulated
+devices or offline checks, not connected boards.
+
+```bash
+python -m unittest discover -s . -p test_nuwriter.py -v
+```
+
+```bash
+python -m unittest discover -s gui -p test_gui.py -v
+```
+
+Windows batch integration tests require the sibling `numaker-iot-nuc980g2`
+directory and are skipped when it is absent from a standalone checkout.
+Native desktop rendering and real-board operations still need manual testing.
 
 ## License
 

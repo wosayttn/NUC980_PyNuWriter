@@ -43,6 +43,7 @@ import serial.tools.list_ports
 
 DEFAULT_PIN = "rts"
 ACTIVE_LOW = True
+CH341_NOT_FOUND = 3
 
 
 def find_ch341_port():
@@ -71,6 +72,10 @@ def list_ports():
         print("  (No CH341 found)")
 
 
+class CH341NotFoundError(RuntimeError):
+    pass
+
+
 class CH341Reset:
     """Generate reset pulses using CH341A RTS, DTR, or TXD."""
 
@@ -85,7 +90,7 @@ class CH341Reset:
     def connect(self):
         port = self.port or find_ch341_port()
         if port is None:
-            raise RuntimeError("No CH341 serial port found; check the driver and USB connection")
+            raise CH341NotFoundError("No CH341 serial port found; manual reset is required")
 
         self.serial = serial.Serial(
             port=port,
@@ -208,6 +213,9 @@ def main():
             ctl.toggle_test(period=args.period, count=args.count)
         else:
             ctl.pulse(args.duration)
+    except CH341NotFoundError as error:
+        print(f"Warning: {error}")
+        return CH341_NOT_FOUND
     except (RuntimeError, ValueError, serial.SerialException) as e:
         print(f"Error: {e}")
         print()
