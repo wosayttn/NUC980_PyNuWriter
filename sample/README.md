@@ -1,5 +1,9 @@
 # Sample images and configurations
 
+[English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
+
+[Main guide](../README.md) | [GUI guide](../gui/README.md) | [Driver guide](../driver/README.md)
+
 GUI integration tests use these real NUC980 images with `--check`; no board
 access or pack-output writes are performed. Synthetic files remain in tests
 that exercise invalid inputs, subprocess failures, and command construction.

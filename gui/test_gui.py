@@ -2037,7 +2037,7 @@ class QtTests(unittest.TestCase):
 
     def test_sample_directory_contains_only_referenced_fixtures(self):
         sample = backend.ROOT / "sample"
-        used = {"README.md", "config_spinand.json", "config_sd1.json", "nuwriter-pack-spinand.bin", "nuwriter-pack-sd.bin", "zImage"}
+        used = {"README.md", "README.zh-CN.md", "README.zh-TW.md", "config_spinand.json", "config_sd1.json", "nuwriter-pack-spinand.bin", "nuwriter-pack-sd.bin", "zImage"}
         for filename in ("config_spinand.json", "config_sd1.json"):
             document = json.loads((sample / filename).read_text(encoding="utf-8"))
             used.update(image["file"] for image in document["image"] if "file" in image)

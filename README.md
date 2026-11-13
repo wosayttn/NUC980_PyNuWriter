@@ -1,5 +1,7 @@
 # NUC980 PyNuWriter
 
+[English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
+
 Cross-platform CLI and desktop GUI for NUC980 RAM downloads, NAND/SPI flash
 programming, and SD/eMMC programming. See the [desktop GUI guide](gui/README.md)
 for interactive use, or follow the CLI examples below.

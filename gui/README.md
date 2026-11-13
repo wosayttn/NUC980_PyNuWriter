@@ -1,5 +1,9 @@
 # NuWriter Desktop GUI
 
+[English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
+
+[Main guide](../README.md) | [Sample guide](../sample/README.md) | [Driver guide](../driver/README.md)
+
 Cross-platform Qt frontend for the existing NuWriter backend. The main layout
 follows NuWriter's Choose type, DDR Init, Re-Connect, image list, Parameters,
 and operation buttons. The backend is run as a separate Python process.

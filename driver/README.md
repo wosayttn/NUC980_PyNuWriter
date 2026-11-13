@@ -1,5 +1,9 @@
 # Windows Drivers
 
+[English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
+
+[Main guide](../README.md) | [GUI guide](../gui/README.md) | [Sample guide](../sample/README.md)
+
 ## NUC980 USB Driver
 
 Run `WinUSB4NuVCOM.exe` to install the NUC980 USB driver. Select the board's
