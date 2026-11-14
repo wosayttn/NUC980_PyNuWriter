@@ -4,21 +4,14 @@
 
 [Main guide](../README.md) | [Sample guide](../sample/README.md) | [Driver guide](../driver/README.md)
 
-Cross-platform Qt frontend for the existing NuWriter backend. The main layout
-follows NuWriter's Choose type, DDR Init, Re-Connect, image list, Parameters,
-and operation buttons. The backend runs as a separate process.
-
 ## Install And Start
 
-For a standalone build, follow the [download guide](../README.md#standalone-downloads)
-and choose `nuwriter-gui-<platform>`. Extract the complete package, then open
-`nuwriter-gui.exe` (Windows), `nuwriter-gui` (Linux), or `nuwriter-gui.app`
-(macOS). Python and the CLI backend are included; keep the `backend` directory
-and bundled resources together. Native USB drivers/libraries are still required.
+Open the [download page](https://github.com/wosayttn/NUC980_PyNuWriter/actions), select a completed item, then download the GUI package for your OS from **Artifacts** (GitHub sign-in required).
+Extract both archive layers and keep the complete directory, including `backend`.
+Open `nuwriter-gui.exe` on Windows, `nuwriter-gui` on Linux, or `nuwriter-gui.app` on macOS.
+On macOS, keep the app and `backend` in the same directory.
 
-For running from source:
-
-From the `NUC980_PyNuWriter` directory, using your Python environment:
+For source use, install the [drivers and OS dependencies](../README.md#install-from-source), then run these commands from `NUC980_PyNuWriter`:
 
 ```bash
 python -m pip install -r gui/requirements.txt
@@ -28,249 +21,72 @@ python -m pip install -r gui/requirements.txt
 python gui/app.py
 ```
 
-On Linux/macOS, use `python3` if needed. PySide6 requires a desktop session;
-Linux also needs its system libusb and Qt platform libraries. If Qt reports
-a missing xcb cursor library on Debian/Ubuntu, install `libxcb-cursor0`.
-Windows needs the NUC980 WinUSB driver and 64-bit Python for the bundled DLL.
+A desktop session is required. Standalone packages do not require Python.
 
-Source builds use the same Python interpreter for the GUI and backend;
-standalone builds use their bundled CLI executable. Starting the GUI does
-not open serial ports, scan USB targets, reset the board, or write flash.
-The main window starts at the top-left of the screen's available area and has
-no Help menu. Reinstall the GUI requirements after updating to include `pyte`
-for ANSI terminal handling.
+## Connect
 
-## Serial Console
+1. Put the board in USB Boot mode and connect its USB Device port to the PC.
+2. Select the board's **DDR Init** setting. Use **Refresh** to list devices.
+3. Select a **USB Device**, or use **Auto** for one connected board.
+4. Click **Re-Connect**. Repeat after resetting or power-cycling the board.
 
-The **Console**, **USB Trace**, and **Op. log** buttons are right-aligned after
-**Refresh** in the USB Device row and stay available during backend operations.
-Click **Console** to show or hide the console window.
-The port list, baud rate, Refresh, and **Open** controls are inside
-that window. Select the board's debug UART/VCOM, not the CH341 reset adapter,
-then click **Open** to connect. Showing the window does not open a serial port.
-Refresh the list after connecting or removing an adapter.
+**Re-Connect may reset the board through a CH341 adapter.** Without that adapter, reset manually into USB Boot mode.
+DDR settings are selected from `sys_cfg`; choose the file matching your board.
 
-On its first opening without saved geometry, the console matches the main
-window's size and opens on its right, aligned at the top. Afterward, hiding or
-closing it retains its position and size; reopening restores them without
-following main-window moves or resizing. Geometry is also saved in settings
-for the next application run. Qt may adjust it if the original screen is no
-longer available; Wayland may override window positions.
-The terminal has no visible horizontal or vertical scrollbars. Use the
-mouse wheel to browse scrollback; new output always returns to the latest text.
+## Program, Read And Erase
 
-The black terminal receives UART output and accepts keyboard input directly.
-Defaults are 115200 baud, 8 data bits, no parity, 1 stop bit, and no flow control.
-Enter sends CR, arrow keys send terminal sequences, and Ctrl+C sends an interrupt
-unless text is selected for copying. Input has no local echo; the target controls
-what appears. Pasting multiple lines requires confirmation.
+1. Select **SPI NAND**, **SPI NOR**, **NAND**, or **SD/eMMC** under **Choose type**.
+2. Click **Browse**, select an image row, then choose **Data**, **Environment**, **Loader**, or **Pack**.
+3. Enter the start offset and, for a loader, its execution address.
+4. Click **Program**. Enable **Program + Verify** to check the written image.
 
-Only one console window/connection is used. Hiding it with **Console** keeps the
-connection and output active; showing it again retains the history. The same
-button displays **Open** when disconnected and **Close** after a successful
-connection. Click **Close** before changing the port or baud rate. Opening
-failure, closing, or device removal leaves the button showing **Open**.
-Closing the console window,
-pressing Esc outside terminal input, or exiting the main window releases the port.
-The console remains usable during backend operations.
+**Program writes the selected row only.** Offsets and lengths are bytes; enter hexadecimal values such as `0x100000`.
+Loader start offsets must be `0x0` for flash or `0x400` for SD/eMMC.
 
-ANSI foreground/background colors support standard/bright colors, 256 colors,
-and RGB. Bold, italic, underline, strikethrough, reverse video, and color reset
-are rendered along with `pyte` cursor movement and clearing.
-
-The console has no Save or Clear buttons; text can be selected and copied.
-DTR/RTS are requested inactive before opening; some adapters/drivers may still
-pulse lines on open, so verify your reset wiring.
-
-## USB Trace
-
-The **USB Trace** button beside **Console** shows or hides the trace window.
-Showing it enables recording; hiding or closing it disables recording, backend
-trace formatting, and GUI trace processing. This also applies during a running
-operation, without restarting the backend or interrupting USB transfers.
-
-The trace window opens to the right of the main window, aligned at the top,
-and follows main-window moves and resizing without changing its own size.
-It stays on the main window's screen; insufficient space may cause overlap.
-On Wayland, the compositor may override the requested position.
-
-Trace records go only to this window. Commands, progress, and errors remain in
-Operation Log. The trace window uses colored, fixed-width text on black.
-`<H->D>` means host to device; `<D->H>` means device to host.
-Each transaction starts with its USB bus/port path, for example
-`[2:4.2.2] <H->D> CONTROL OUT request=0xb0 value=0x0080 index=0 length=0`.
-This identifies the device; bulk endpoint addresses remain in `endpoint=`.
-Records without available device-path information retain the unprefixed format.
-The `data=` label is omitted. Data values start on the next line, with 16 bytes
-per line, aligned with the first character of the transaction name (`BULK` or
-`CONTROL`). The indentation adjusts to the device-path and direction prefix.
-Data lines keep the transaction color; `...` appears on its own equally
-indented line when the preview is truncated.
-
-| Transaction | Prefix | Color |
-| --- | --- | --- |
-| CONTROL OUT | `<H->D>` | Blue |
-| CONTROL IN | `<D->H>` | Cyan |
-| BULK OUT | `<H->D>` | Amber |
-| BULK IN | `<D->H>` | Green |
-
-Hiding or closing the window retains existing contents but adds no new records.
-Only one trace window is used; its button stays available during operations.
-The latest 10,000 lines are retained and new output scrolls to the latest entry.
-Text can be selected and copied. Trace data may contain image or readback bytes;
-review it before sharing.
-
-## Program Flash
-
-1. Prepare USB Boot mode and connect the USB Device port.
-2. Select DDR Init for your board. Use Refresh to list USB targets, or leave
-   Auto selected when only one target is connected.
-3. Click Re-Connect to initialize DDR/XUSB. This runs the pre-attach reset hook.
-4. Choose SPI NAND, SPI NOR, NAND, or SD/eMMC. Browse for an image and select
-   Data, Environment, Loader, or Pack.
-5. Set the image start offset and execution address, then click Program.
-
-DDR Init lists only INI files from the project's relative `sys_cfg` directory.
-External DDR file browsing is unavailable. Paths are resolved relative to the
-project location, independently of the current working directory.
-
-All addresses and read/erase lengths are bytes; use `0x` for hexadecimal.
-Loader images need the selected DDR settings and the correct linked entry
-address. Their start offset is 0 for flash or `0x400` for SD/eMMC.
-
-Each operation is checked offline before the actual command starts. A failed
-check prevents the actual operation from starting. Save JSON writes the
-configuration file directly.
-
-## Actions
-
-| Action | Behavior |
+| Control | Operation |
 | --- | --- |
-| Program | Programs the selected row only; existing destination data may be overwritten |
-| Program + Verify | Programs one image, then uses backend readback verification |
-| Verify | Reads back a Data image and compares it; never programs |
-| Read | Saves the selected byte range, or the whole device, to a file |
-| Erase | Erases all good blocks or an aligned range after confirmation |
-| Format | SD/eMMC only; replaces partition/format data and reinitializes DDR/XUSB |
+| Verify | Read and compare a Data image without programming |
+| Read | Save a byte range or the whole device to a file |
+| Erase | Erase all good blocks or a specified aligned range |
+| Format | Replace SD/eMMC partition settings; sizes are MiB and the last partition uses remaining space |
 
-Standalone Verify supports Data images only. For Loader and Environment,
-use Program + Verify. Pack images also support Program + Verify. Read/Verify obey
-the backend's read alignment, including 64 KiB for SPI NOR.
+Use **Program + Verify** for Loader, Environment and Pack images.
+SPI NOR whole-device reads require its capacity in bytes.
 
-SD/eMMC Format sizes are MiB, and the final partition uses remaining capacity.
-Formatting and erase destroy data. Interrupted writes or erases cannot be undone;
-check or reset the target before reconnecting. Use the title-bar close button
-to exit after the current operation has finished.
+**Erase and Format destroy data. Back up first.** Erase is unavailable for SD/eMMC.
+If an operation times out, check or reset the board before reconnecting.
+Close the application only after the operation finishes; settings are saved on exit.
 
 ## SDRAM
 
-Choose SDRAM, select an image and its address, then select Download only or
-Download and run. Enable DTB file to supply a DTB and address. Optional bootargs
-change only the downloaded DTB copy. RAM execution may start software that
-accesses flash; a completed transfer does not certify successful boot.
+Select **SDRAM**, choose an image and its load address, then choose **Download only** or **Download and run**.
+Enable **DTB file** to supply a DTB and address; enable **Bootargs** to enter kernel parameters.
+For raw Linux kernel execution, use `zImage`, not `uImage`, and matching DTB/rootfs files.
+RAM downloading does not program flash, but software started on the board may write it.
 
-## Pack
+## Create And Program A Pack
 
-Choose Pack to open/edit a JSON configuration. Add, Modify, and Delete edit
-the image table; Save JSON writes the configuration. Loader-specific fields
-such as `ddr_ini`, `page_size`, and SPI commands go in Additional JSON parameters.
-SD/eMMC partition records use the same JSON fields as the backend.
+1. Select **Pack** and open a [sample configuration](../sample/README.md) or your JSON file.
+2. Use **Add**, **Modify**, and **Delete** to edit the image list. **Save JSON** saves the configuration.
+3. Set the output path and click **Output** to generate the pack. No board connection is needed.
+4. Select the target flash type, choose the generated file as **Pack**, then click **Program**.
 
-Output generates a pack without connecting to a board. It uses a temporary
-snapshot of the edited configuration and leaves an opened JSON file unchanged.
-Relative image/DDR paths resolve from the configuration directory. Save JSON
-keeps that directory so relative paths do not change meaning. The snapshot
-is removed when the operation finishes or is cancelled.
+Relative image paths are resolved from the JSON directory. Confirm all offsets, DDR and flash settings before programming.
+For the samples, keep the source ZIP's `sample` and `sys_cfg` directories together.
+Single-board Pack programming does not automatically erase the whole device.
+Pack verification excludes loader headers/DDR data, SD partition setup, OOB and unused areas.
 
-Choose Mass Production to process connected targets sequentially. Each board
-is checked, then runs Erase, Burn, and Pack Verify. NAND/SPI NAND performs
-Erase All, preserving marked bad blocks; this deletes existing boot,
-environment, and filesystem data. SPI NOR and SD/eMMC skip the separate
-full-device erase. Re-Connect still initializes all targets sequentially.
+## Mass Production
 
-The results table shows Erase/Burn/Verify and the final result for each USB
-device path. A failed board is not retried; later boards continue, and any
-failure makes the overall operation fail. Invalid Pack/DDR configuration is
-rejected before programming. This version does not perform parallel burning
-or automatic reset/retry. Back up target data before starting MP.
+1. Put every board in USB Boot mode and connect their USB Device ports.
+2. Select **Mass Production**, the DDR setting and target media. Click **Re-Connect**.
+3. Select a pack and start programming. Review each device's **Erase**, **Burn**, **Verify**, and final result.
 
-Pack Verify reads back each image using the firmware's action-7 protocol.
-Loader header/DDR bytes and SD partition instructions are excluded from the
-byte comparison. Loader must be first at offset 0 (flash) or 0x400 (SD/eMMC);
-SPI NOR image offsets must align to 64 KiB. Verify covers packed image data,
-not every physical/OOB byte or unused flash region.
+**NAND/SPI NAND Mass Production erases all good blocks before programming.** SPI NOR and SD/eMMC skip the separate whole-device erase.
+Boards run sequentially. Failed boards are not retried; later boards continue.
 
-## Saved Settings And Input Validation
+## Console And Logs
 
-Closing the application saves `settings.json` in Qt's per-user application
-configuration directory (`QStandardPaths.AppConfigLocation`). On Windows this
-is normally `%LOCALAPPDATA%/NUC980 PyNuWriter`; on Linux it is normally
-`~/.config/NUC980 PyNuWriter` (or the directory selected by `XDG_CONFIG_HOME`).
-
-The JSON stores the selected media/DDR/USB target, image lists and selected
-rows, page fields/options, Pack drafts and configuration path, dialog defaults,
-Console port/baud, and window sizes. Paths to DDR files remain restricted to
-the bundled `sys_cfg` directory. Existing DDR selections migrate from the old
-platform settings. Existing logs, connection state, active operations, and
-popup visibility are not restored. Startup never connects or programs a target.
-
-Writes are atomic. Invalid JSON loads defaults and is backed up as
-`settings.json.<timestamp>.invalid` before a replacement is written. Invalid
-individual values are ignored. If saving fails, the application reports the
-error and stays open so the settings are not silently lost.
-
-Address and byte-length editors require `0x` followed by 1-8 hexadecimal digits
-(`0x0` through `0xffffffff`). Invalid characters are rejected while typing;
-incomplete or out-of-range values cannot start an operation. Read/erase lengths
-must be nonzero. Numeric partition controls enforce their own ranges. File paths
-and bootargs reject control characters; source/output paths are checked before
-use. Additional Pack parameters must be a JSON object. Backend preflight still
-checks image formats, alignment, and device-specific constraints before access.
-
-## Logs And Tests
-
-When Operation Log is first opened during an application run, it queries the
-host OS/kernel, CPU architecture and core
-counts, total/available RAM, Python interpreter, Qt platform, display sizes/DPI
-scale, and settings-file location. It also lists versions and loaded status for
-PySide6, pyte, pyserial, psutil, PyUSB, and pyfdt using package metadata; deferred
-backend modules are not imported just to report their versions.
-Missing hardware information is marked
-unavailable. These queries do not run when the main window starts, and are not
-repeated when the log is hidden and shown again. This does not scan USB devices
-or open serial ports. The record remains in the log and is not saved in settings.
-
-Click **Op. log** to toggle the nonmodal Operation Log window on or off.
-The button stays checked while the window is shown. Only one log window is
-used; output continues to accumulate while hidden and is retained when shown
-again. The log appears directly below the main window, matches its outer width
-including window borders, has
-a fixed height of 320, and follows it when moved or resized. Exiting the main
-window also hides the log.
-
-The log window has a **NuWriter - Operation Log** title bar for dragging.
-It has no minimize, maximize, close, Save, or Clear buttons.
-Esc and Alt+F4 do not close it; use **Op. log** to hide it. Console window
-controls are unchanged.
-
-Commands are blue and normal backend results are green. Result lines containing
-`Error` (case-insensitive) are red. Text can be selected and copied. New output
-always scrolls to the latest text.
-The main 800x560 window uses the freed
-space for the active media page, keeping Flash controls side by side.
-
-An operation cannot start while another is running.
-
-```bash
-python -m unittest discover -s gui -p test_gui.py -v
-```
-
-Tests use simulated processes and the real backend's offline checks, not
-hardware operations. Real-image integration cases use the files and SPI NAND/
-SD1 configuration templates in [sample](../sample/README.md). Commit those
-fixtures with the tests; offline checks do not write pack outputs.
-Windows rendering and offline flows have been checked;
-Linux/macOS and real-board GUI operations still require platform testing.
-
-The GUI does not implement raw/OOB programming or custom device geometry.
-It does not launch the Windows executable or modify the backend source.
+- **Console**: select the debug UART port and baud rate, then click **Open**. Default: 115200, 8N1. Click **Close** before changing the port or baud rate. Hiding the console keeps the port open; closing its window releases it.
+- **USB Trace**: show the window to record USB transfers; hide it to stop recording. `<H->D>` means PC to board; `<D->H>` means board to PC. Data may contain image contents; review before sharing.
+- **Op. log**: show commands, progress and errors. Click the same button to hide it. Text can be selected and copied.

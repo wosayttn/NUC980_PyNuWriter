@@ -10,7 +10,9 @@ operations. The export workflow invokes them from the repository root.
 - `hooks/`: local PyInstaller hooks for USB safety, Qt exclusions and replaceable
   pyte source.
 - `requirements-export.txt`: version-pinned build dependencies.
-- `test_export.py`: export regression tests, separate from backend/GUI tests.
+- `test_nuwriter.py`: backend and protocol regression tests.
+- `test_gui.py`: GUI command, layout and offline integration tests.
+- `test_export.py`: export regression tests.
 
 ## Build And Test
 
@@ -23,8 +25,23 @@ python -m pip install -r .github/scripts/requirements-export.txt
 ```
 
 ```bash
+python -m unittest discover -s .github/scripts -p test_nuwriter.py -v
+```
+
+```bash
+python -m unittest discover -s .github/scripts -p test_gui.py -v
+```
+
+```bash
 python -m unittest discover -s .github/scripts -p test_export.py -v
 ```
+
+Run GUI tests with `QT_QPA_PLATFORM=offscreen` in headless environments. Tests
+use simulated devices/processes and real sample-image offline checks, not
+connected boards. Commit sample fixtures with the tests. Offline checks do
+not write pack outputs. Windows batch integration tests require the sibling
+`numaker-iot-nuc980g2` directory and are skipped if it is absent. Native desktop
+rendering and real-board operations still need platform-specific manual testing.
 
 ```bash
 python .github/scripts/export.py

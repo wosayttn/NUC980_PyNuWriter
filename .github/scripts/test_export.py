@@ -212,6 +212,10 @@ class ExportTests(unittest.TestCase):
             self.assertTrue((source / ".github/scripts/hooks/hook-PySide6.QtGui.py").is_file())
             self.assertTrue((source / ".github/scripts/BUILDING.md").is_file())
             self.assertFalse((source / ".github/scripts/README.md").exists())
+            self.assertTrue((source / ".github/scripts/test_nuwriter.py").is_file())
+            self.assertTrue((source / ".github/scripts/test_gui.py").is_file())
+            self.assertFalse((source / "test_nuwriter.py").exists())
+            self.assertFalse((source / "gui/test_gui.py").exists())
             self.assertTrue((source / "gui/app.py").is_file())
             self.assertIn("pyserial==3.5", (source / ".github/scripts/requirements-export.txt").read_text())
             self.assertFalse((source / "export.py").exists())
@@ -280,6 +284,13 @@ class ExportTests(unittest.TestCase):
                 self.assertNotRegex(path.read_text(encoding="utf-8"), pattern)
         self.assertTrue((export.SCRIPTS / "BUILDING.md").is_file())
         self.assertFalse((export.SCRIPTS / "README.md").exists())
+
+    def test_maintenance_tests_are_kept_in_the_internal_scripts_directory(self):
+        for name in ("test_nuwriter.py", "test_gui.py", "test_export.py"):
+            with self.subTest(name=name):
+                self.assertTrue((export.SCRIPTS / name).is_file())
+        self.assertFalse((ROOT / "test_nuwriter.py").exists())
+        self.assertFalse((ROOT / "gui/test_gui.py").exists())
 
 
 if __name__ == "__main__":
