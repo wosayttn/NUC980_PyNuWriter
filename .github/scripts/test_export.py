@@ -430,7 +430,8 @@ class ExportTests(unittest.TestCase):
              patch.object(nuwriter, "run_pre_attach_hook") as hook:
             self.assertEqual(nuwriter.main(["--export-smoke-test"]), 0)
         self.assertEqual([call.args[0] for call in load.call_args_list],
-                         ["usb.core", "usb.util", "usb.backend.libusb1", "pyfdt.pyfdt", "serial.tools.list_ports"])
+                         ["usb.core", "usb.util", "usb.backend.libusb1", "pyfdt.pyfdt",
+                          "serial.tools.list_ports"])
         discover.assert_not_called()
         hook.assert_not_called()
         validate.assert_called_once_with()
@@ -484,6 +485,23 @@ class ExportTests(unittest.TestCase):
         for name in ("GPL-3.0.txt", "LGPL-3.0.txt", "pyserial-LICENSE.txt", "README.md"):
             with self.subTest(name=name):
                 self.assertTrue((export.LICENSE_INPUTS / name).is_file())
+
+    def test_nuc970_and_nuc980_resources_are_packaged_for_export(self):
+        with patch.object(sys, "platform", "win32"), patch.object(export.subprocess, "run") as run:
+            export.freeze(export.ROOT / "dist", "nuwriter", "nuwriter.py", gui=False)
+        command = run.call_args.args[0]
+        self.assertIn(f"{export.ROOT / 'key_cfg'}:key_cfg", command)
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(export.metadata, "version", side_effect=lambda name: f"0.0-{name}"):
+            directory = Path(temporary)
+            export.copy_application_source(directory, export.PACKAGES)
+            source = directory / "sources" / "application"
+            self.assertTrue((source / "nuwriter.py").is_file())
+            self.assertTrue((source / "key_cfg" / "nuc970" / "key.dat").is_file())
+            self.assertTrue((source / "sys_cfg" / "nuc980" / "NUC980DK71YC.ini").is_file())
+            self.assertTrue((source / "xusb" / "nuc980" / "xusb128.bin").is_file())
+            self.assertTrue((source / "sys_cfg" / "nuc970" / "NUC972DF62Y.ini").is_file())
+            self.assertTrue((source / "xusb" / "nuc970" / "xusb32.bin").is_file())
 
 
 if __name__ == "__main__":

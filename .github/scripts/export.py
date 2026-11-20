@@ -135,7 +135,7 @@ def copy_application_source(directory, packages):
         shutil.copy2(path, destination / path.name)
     for name in ("LICENSE", "README.md", "README.zh-TW.md", "README.zh-CN.md", "requirements.txt"):
         shutil.copy2(ROOT / name, destination / name)
-    for name in ("gui", "sys_cfg", "xusb", "driver"):
+    for name in ("gui", "sys_cfg", "xusb", "key_cfg", "driver"):
         shutil.copytree(ROOT / name, destination / name,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "screenshot"), dirs_exist_ok=True)
     shutil.copytree(LICENSE_INPUTS, destination / ".github" / "licenses", dirs_exist_ok=True)
@@ -216,16 +216,16 @@ def copy_licenses(directory, packages):
     collect_sources(directory, packages)
     copy_application_source(directory, packages)
     (directory / "README.txt").write_text(
-        "NUC980 PyNuWriter standalone export\n\n"
+        "NUC980 / NUC970 PyNuWriter standalone export\n\n"
         "Extract the entire archive and keep all files together. Python is bundled.\n"
-        "CLI: nuwriter --help (Windows: nuwriter.exe --help).\n"
+        "CLI: nuwriter --help (Windows: nuwriter.exe --help). Specify --chip nuc980 or --chip nuc970.\n"
         "GUI: open nuwriter-gui.exe, nuwriter-gui, or nuwriter-gui.app.\n"
         "Windows: configure a libusb-compatible device driver, such as WinUSB, for programming USB 0416:5963.\n"
         "WinUSB4NuVCOM.exe is for the board's USB-to-UART/VCOM interface, not programming USB.\n"
         "Bundled support files: CLI _internal/driver (GUI: backend/nuwriter/_internal/driver).\n"
         "Linux/macOS: install native libusb-1.0; Linux also needs Qt system libraries and USB permissions.\n"
         "Builds are not developer-signed or notarized. See the repository README for platform setup.\n"
-        "DDR/XUSB resources are included; large sample images are not.\n"
+        "NUC980/NUC970 DDR, XUSB, and sample key_cfg resources are included; large sample images are not.\n"
         "Initialization can reset the board through the optional CH341 adapter.\n"
         "Project code: LICENSE. Third-party components: licenses/ and driver license/source files.\n"
         "This application uses Qt / PySide6 and pyte under LGPLv3 when the GUI is included.\n"
@@ -248,7 +248,7 @@ def freeze(output, name, entry, gui=False):
                "--additional-hooks-dir", str(SCRIPTS / "hooks")]
     if sys.platform.startswith("linux"):
         command += ["--runtime-hook", str(SCRIPTS / "hooks" / "rthook_linux_gio.py")]
-    for resource in ("sys_cfg", "xusb"):
+    for resource in ("sys_cfg", "xusb", "key_cfg"):
         command += ["--add-data", f"{ROOT / resource}:{resource}"]
     if gui:
         command += ["--windowed", "--paths", str(ROOT / "gui"), "--paths", str(SCRIPTS),
@@ -338,8 +338,12 @@ def smoke(directory, gui=False):
             return
         cli = executable(directory, "nuwriter")
         for arguments in (["--help"], ["--version"], ["--export-smoke-test"],
-                          ["--reset-ch341", "--help"], ["-a", "NUC980DK71YC.ini", "--check"],
-                          ["-w", "ddr", "0x8000", str(ROOT / "sample" / "zImage"), "-o", "execute",
+                          ["--reset-ch341", "--help"],
+                          ["--chip", "nuc980", "-a", "NUC980DK71YC.ini", "--check"],
+                          ["--chip", "nuc970", "-a", "NUC972DF62Y.ini", "--check"],
+                          ["--chip", "nuc970", "-w", "mtp", str(ROOT / "key_cfg" / "nuc970" / "key.dat"),
+                           "--mtp-option", "aes", "--mtp-mode", "spinor", "--check"],
+                          ["--chip", "nuc980", "-w", "ddr", "0x8000", str(ROOT / "sample" / "zImage"), "-o", "execute",
                            "--dtb", str(ROOT / "sample" / "nuc980-iot-128m-bmc.dtb"), "--dtb-addr", "0x1400000",
                            "--bootargs", "console=ttyS0,115200n8", "--check"]):
             run_checked([cli] + arguments, working, environment)

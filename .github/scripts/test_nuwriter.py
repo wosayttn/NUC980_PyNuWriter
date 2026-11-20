@@ -268,7 +268,8 @@ class MassProductionTests(unittest.TestCase):
     def test_mass_pack_cli_continues_next_board_after_failure(self):
         devices = [SimpleNamespace(bus=1, port_numbers=(2,), address=2),
                    SimpleNamespace(bus=1, port_numbers=(3,), address=3)]
-        config = SimpleNamespace(pack=False, initialize=False, all_devices=True, mode="SPINAND", operation="program_verify")
+        config = SimpleNamespace(chip="nuc980", profile=nuwriter.NUC980_PROFILE,
+                                 pack=False, initialize=False, all_devices=True, mode="SPINAND", operation="program_verify")
         prepared = [self.prepared()]
         sessions = [Mock(), Mock()]
         writers = [Mock(), Mock()]
@@ -279,10 +280,10 @@ class MassProductionTests(unittest.TestCase):
              patch.object(nuwriter, "preflight", return_value=prepared), \
              patch.object(nuwriter, "discover_devices", return_value=devices), \
              patch.object(nuwriter, "UsbSession", side_effect=sessions) as session_class, \
-             patch.object(nuwriter, "Nuc980Writer", side_effect=writers), \
+             patch.object(nuwriter, "NucWriter", side_effect=writers), \
              patch.object(nuwriter.sys, "stdout", io.StringIO()) as output:
             session_class.device_identity.side_effect = lambda device: (device.bus, device.port_numbers)
-            self.assertEqual(nuwriter.main(["-m", "-w", "spinand", "pack.bin", "-o", "verify"]), 1)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-m", "-w", "spinand", "pack.bin", "-o", "verify"]), 1)
         writers[1].run_mass_pack.assert_called_once_with(prepared[0], "1:3")
         for session in sessions:
             session.close.assert_called_once()
@@ -435,7 +436,7 @@ class WindowsDllPathTests(unittest.TestCase):
              patch.object(nuwriter, "discover_devices") as discover, \
              patch.object(nuwriter, "run_pre_attach_hook") as hook, \
              patch.object(nuwriter.sys, "stdout", io.StringIO()):
-            self.assertEqual(nuwriter.main(["-a", "NUC980DK71YC.ini", "--check"]), 0)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-a", "NUC980DK71YC.ini", "--check"]), 0)
         configure.assert_not_called()
         discover.assert_not_called()
         hook.assert_not_called()
@@ -628,7 +629,8 @@ class PreAttachHookTests(unittest.TestCase):
     def test_attach_runs_hook_once_before_usb_scan_for_all_targets(self):
         events = []
         devices = [SimpleNamespace(bus=1, port_numbers=(port,), address=port) for port in (2, 3)]
-        config = SimpleNamespace(pack=False, initialize=True, all_devices=True, mode="SDRAM", operation="attach")
+        config = SimpleNamespace(chip="nuc980", profile=nuwriter.NUC980_PROFILE,
+                                 pack=False, initialize=True, all_devices=True, mode="SDRAM", operation="attach")
         writer = Mock()
         writer.attach.return_value = {"nand_page_size": 0, "spinand_page_size": 0, "emmc_blocks": 0}
         def discover():
@@ -639,9 +641,9 @@ class PreAttachHookTests(unittest.TestCase):
              patch.object(nuwriter, "run_pre_attach_hook", side_effect=lambda: events.append("hook")) as hook, \
              patch.object(nuwriter, "discover_devices", side_effect=discover), \
              patch.object(nuwriter, "UsbSession", return_value=Mock()) as session_class, \
-             patch.object(nuwriter, "Nuc980Writer", return_value=writer):
+             patch.object(nuwriter, "NucWriter", return_value=writer):
             session_class.device_identity.side_effect = lambda device: (device.bus, device.port_numbers)
-            self.assertEqual(nuwriter.main(["-m", "-a", "NUC980DK71YC.ini"]), 0)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-m", "-a", "NUC980DK71YC.ini"]), 0)
         self.assertEqual(events, ["hook", "scan"])
         hook.assert_called_once()
         self.assertEqual(writer.attach.call_count, 2)
@@ -649,15 +651,15 @@ class PreAttachHookTests(unittest.TestCase):
     def test_failed_hook_stops_before_usb_discovery(self):
         with patch.object(nuwriter, "run_pre_attach_hook", side_effect=nuwriter.NuWriterError("hook failed")), \
              patch.object(nuwriter, "discover_devices") as discover:
-            self.assertEqual(nuwriter.main(["-a", "NUC980DK71YC.ini"]), 1)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-a", "NUC980DK71YC.ini"]), 1)
             discover.assert_not_called()
 
     def test_offline_checks_and_existing_xusb_queries_do_not_run_hook(self):
         with patch.object(nuwriter, "run_pre_attach_hook") as hook, \
              patch.object(nuwriter, "discover_devices", return_value=[]) as discover:
-            self.assertEqual(nuwriter.main(["-a", "NUC980DK71YC.ini", "--check"]), 0)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-a", "NUC980DK71YC.ini", "--check"]), 0)
             discover.assert_not_called()
-            self.assertEqual(nuwriter.main(["-r", "spinand", "0", "1", "unused.bin"]), 1)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-r", "spinand", "0", "1", "unused.bin"]), 1)
             hook.assert_not_called()
 
 
@@ -915,15 +917,15 @@ class InitializationTests(unittest.TestCase):
         config = fixture_config()
         root = Path(nuwriter.__file__).resolve().parent
         self.assertEqual(config.resource_dir, root)
-        self.assertEqual(config.ddr().parent, root / "sys_cfg")
-        self.assertEqual(config.xusb("xusb64.bin"), root / "xusb" / "xusb64.bin")
+        self.assertEqual(config.ddr().parent, root / "sys_cfg" / "nuc980")
+        self.assertEqual(config.xusb("xusb64.bin"), root / "xusb" / "nuc980" / "xusb64.bin")
 
     def test_custom_resource_root_changes_both_directories(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = fixture_config(resource_dir=root)
-            self.assertEqual(config.ddr().parent, root / "sys_cfg")
-            self.assertEqual(config.xusb("xusb128.bin"), root / "xusb" / "xusb128.bin")
+            self.assertEqual(config.ddr().parent, root / "sys_cfg" / "nuc980")
+            self.assertEqual(config.xusb("xusb128.bin"), root / "xusb" / "nuc980" / "xusb128.bin")
 
     def test_info_layout_matches_c_alignment(self):
         config = fixture_config()
@@ -953,7 +955,7 @@ class InitializationTests(unittest.TestCase):
         with patch.object(nuwriter, "load_ddr", return_value=(bytes(8), "xusb.bin")):
             with patch.object(Path, "read_bytes", autospec=True, return_value=image) as read_image:
                 nuwriter.Nuc980Writer(config, transport).attach()
-        read_image.assert_called_once_with(config.resource_dir / "xusb" / "xusb.bin")
+        read_image.assert_called_once_with(config.resource_dir / "xusb" / "nuc980" / "xusb.bin")
         self.assertEqual(transport.write.call_args_list[0].args, (struct.pack("<II", 8, 16),))
         self.assertEqual(transport.write.call_args_list[2].args, (struct.pack("<II", 3, 0x8000),))
         transport.send_chunks.assert_called_once_with(b"usb")
@@ -1416,7 +1418,7 @@ class PackTests(unittest.TestCase):
             with patch.object(nuwriter, "discover_devices") as discover, \
                  patch.object(nuwriter, "run_pre_attach_hook") as hook, \
                  patch.object(nuwriter.sys, "stdout", io.StringIO()):
-                self.assertEqual(nuwriter.main(["-w", "spinand", str(pack), "-o", "verify", "--check"]), 0)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", "-w", "spinand", str(pack), "-o", "verify", "--check"]), 0)
                 discover.assert_not_called()
                 hook.assert_not_called()
 
@@ -1492,9 +1494,9 @@ class IntegratedPackTests(unittest.TestCase):
                         images.append({"type": "partition", "partition": {"count": 1, "reserved_size": 32, "sizes": [0]}})
                     config.write_text(nuwriter.json.dumps({"mode": media, "output": str(output), "image": images}), encoding="utf-8")
                     with patch.object(nuwriter, "run_pre_attach_hook") as hook, patch.object(nuwriter, "discover_devices") as discover:
-                        self.assertEqual(nuwriter.main(["-p", str(config), "--check"]), 0)
+                        self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(config), "--check"]), 0)
                         self.assertFalse(output.exists())
-                        self.assertEqual(nuwriter.main(["-p", str(config)]), 0)
+                        self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(config)]), 0)
                         hook.assert_not_called()
                         discover.assert_not_called()
                     self.assertEqual([child[2] for child in nuwriter.parse_pack(output.read_bytes())], [0, 1, 3] if media in {"sd", "emmc"} else [0, 1])
@@ -1504,13 +1506,13 @@ class IntegratedPackTests(unittest.TestCase):
             root = Path(directory)
             loader, ddr = root / "loader.bin", root / "ddr.ini"
             loader.write_bytes(b"loader")
-            original = Path(nuwriter.__file__).parent / "sys_cfg" / "NUC980DK71YC.ini"
+            original = Path(nuwriter.__file__).parent / "sys_cfg" / "nuc980" / "NUC980DK71YC.ini"
             ddr.write_bytes(original.read_bytes())
             images = [{"file": loader, "type": "loader", "offset": 0, "ddr_ini": ddr}]
             with self.assertRaisesRegex(nuwriter.NuWriterError, "cannot overwrite"):
-                nuwriter.create_pack_file(images, ddr, media="nand")
+                nuwriter.create_pack_file(images, ddr, media="nand", chip="nuc980")
             self.assertEqual(ddr.read_bytes(), original.read_bytes())
-            output = nuwriter.create_pack_file(images, root / "pack.bin", media="nand")
+            output = nuwriter.create_pack_file(images, root / "pack.bin", media="nand", chip="nuc980")
             self.assertEqual(nuwriter.parse_pack(output.read_bytes())[0][2], 2)
 
     def test_conflicting_loader_aliases_are_not_silently_selected(self):
@@ -1524,7 +1526,7 @@ class IntegratedPackTests(unittest.TestCase):
                 with self.subTest(values=values):
                     image = {"file": source, "type": "loader", "ddr_ini": "NUC980DK71YC.ini", **values}
                     with self.assertRaisesRegex(nuwriter.NuWriterError, "conflict"):
-                        nuwriter.create_pack_file([image], root / "pack.bin", media="nand")
+                        nuwriter.create_pack_file([image], root / "pack.bin", media="nand", chip="nuc980")
 
     def test_create_pack_file_supports_loader_env_data_for_all_media(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1540,7 +1542,7 @@ class IntegratedPackTests(unittest.TestCase):
                       {"file": str(data), "offset": "0x100000", "type": 3}]
             for media in ("spinand", "spinor", "nand", "sd", "emmc"):
                 with self.subTest(media=media):
-                    output = nuwriter.create_pack_file(images, root / (media + ".bin"), media=media)
+                    output = nuwriter.create_pack_file(images, root / (media + ".bin"), media=media, chip="nuc980")
                     blob = output.read_bytes()
                     children = nuwriter.parse_pack(blob)
                     self.assertEqual([child[2] for child in children], [2, 1, 0])
@@ -1553,14 +1555,14 @@ class IntegratedPackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             settings = {"count": 2, "reserved_size": 32, "sizes": [128, 0]}
-            output = nuwriter.create_pack_file([{"type": "partition", "partition": settings}], root / "sd.bin", media="emmc")
+            output = nuwriter.create_pack_file([{"type": "partition", "partition": settings}], root / "sd.bin", media="emmc", chip="nuc980")
             header, payload, kind = nuwriter.parse_pack(output.read_bytes())[0]
             self.assertEqual((len(payload), kind), (48, 3))
             self.assertEqual(struct.unpack_from("<4I", payload), (0, 2, 32, 0xFFFFFFFF))
             self.assertEqual(struct.unpack_from("<I", header, 4)[0], 0xFFFFFFFF)
             record = root / "partition.bin"
             record.write_bytes(payload)
-            raw_output = nuwriter.create_pack_file([{"type": "partition", "file": str(record)}], root / "raw.bin", media="sd")
+            raw_output = nuwriter.create_pack_file([{"type": "partition", "file": str(record)}], root / "raw.bin", media="sd", chip="nuc980")
             self.assertEqual(nuwriter.parse_pack(raw_output.read_bytes())[0][1], payload)
 
     def test_partition_is_rejected_for_flash_and_invalid_geometry(self):
@@ -1569,7 +1571,7 @@ class IntegratedPackTests(unittest.TestCase):
             image = {"type": "partition", "partition": {"count": 2, "reserved_size": 32, "sizes": [128, 0]}}
             for media in ("spinand", "spinor", "nand"):
                 with self.subTest(media=media), self.assertRaises(nuwriter.NuWriterError):
-                    nuwriter.create_pack_file([image], root / "bad.bin", media=media)
+                    nuwriter.create_pack_file([image], root / "bad.bin", media=media, chip="nuc980")
             with self.assertRaises(nuwriter.NuWriterError):
                 nuwriter.partition_payload({"count": 2, "reserved_size": 32, "sizes": [0, 0]})
 
@@ -1601,7 +1603,7 @@ class IntegratedPackTests(unittest.TestCase):
                 "ddr_ini": "NUC980DK71YC.ini", "page_size": 2048, "spare_area": 64,
                 "quad_read_cmd": 107, "read_status_cmd": 15, "write_status_cmd": 31,
                 "status_value": 24, "dummy_byte": 1}]}), encoding="utf-8")
-            self.assertEqual(nuwriter.main(["-p", str(config)]), 0)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(config)]), 0)
             child = nuwriter.parse_pack(output.read_bytes())[0]
             self.assertEqual(child[2], 2)
             self.assertEqual(struct.unpack_from("<HH5B", child[1], 16), (2048, 64, 107, 15, 31, 24, 1))
@@ -1661,14 +1663,14 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             ini, output = self.pack_config(directory)
             with patch.object(nuwriter.importlib, "import_module", side_effect=AssertionError("USB imported")):
-                self.assertEqual(nuwriter.main([str(ini), "--check"]), 0)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", str(ini), "--check"]), 0)
             self.assertFalse(output.exists())
 
     def test_offline_pack_runs_without_usb(self):
         with tempfile.TemporaryDirectory() as directory:
             ini, output = self.pack_config(directory)
             with patch.object(nuwriter.importlib, "import_module", side_effect=AssertionError("USB imported")):
-                self.assertEqual(nuwriter.main([str(ini)]), 0)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", str(ini)]), 0)
             self.assertEqual(nuwriter.parse_pack(output.read_bytes())[0][1], b"abc")
 
     def test_missing_input_returns_error_before_discovery(self):
@@ -1676,7 +1678,7 @@ class CliTests(unittest.TestCase):
             ini, output = self.pack_config(directory)
             (Path(directory) / "data.bin").unlink()
             with patch.object(nuwriter, "discover_devices") as discover:
-                self.assertEqual(nuwriter.main([str(ini)]), 1)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", str(ini)]), 1)
             discover.assert_not_called()
 
     def test_pack_output_cannot_overwrite_input(self):
@@ -1685,7 +1687,7 @@ class CliTests(unittest.TestCase):
             config = nuwriter.RunConfig(ini)
             config.ini.set("RUN", "pack_path", str(Path(directory) / "data.bin"))
             with patch.object(nuwriter, "RunConfig", return_value=config):
-                self.assertEqual(nuwriter.main([str(ini)]), 1)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", str(ini)]), 1)
             self.assertEqual((Path(directory) / "data.bin").read_bytes(), b"abc")
 
     def test_multiple_devices_require_explicit_selection(self):
@@ -1718,8 +1720,8 @@ class CliTests(unittest.TestCase):
             session_class.device_identity.side_effect = lambda target: (target.bus, target.port_numbers)
             with patch.multiple(nuwriter, RunConfig=Mock(return_value=config),
                                 run_pre_attach_hook=Mock(), discover_devices=Mock(return_value=[device]),
-                                UsbSession=session_class, Nuc980Writer=Mock(return_value=writer)):
-                self.assertEqual(nuwriter.main([str(ini)]), 1)
+                                UsbSession=session_class, NucWriter=Mock(return_value=writer)):
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", str(ini)]), 1)
             session.close.assert_called_once()
 
 
@@ -1727,12 +1729,12 @@ class CompatibleCliTests(unittest.TestCase):
     def configured_command(self, arguments):
         configurations = []
         with patch.object(nuwriter, "preflight", side_effect=lambda config: configurations.append(config) or []):
-            self.assertEqual(nuwriter.main(arguments + ["--check"]), 0)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980"] + arguments + ["--check"]), 0)
         return configurations[0]
 
     def test_attach_check_uses_ddr_settings_not_run_ini(self):
         with patch.object(nuwriter, "discover_devices") as discover:
-            self.assertEqual(nuwriter.main(["-a", "NUC980DF61YC.ini", "--check"]), 0)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-a", "NUC980DF61YC.ini", "--check"]), 0)
         discover.assert_not_called()
 
     def test_attach_does_not_program_images(self):
@@ -1795,7 +1797,7 @@ class CompatibleCliTests(unittest.TestCase):
                     ["-c", "config.json"], ["-s", "sd", "0x1000"])
         for arguments in commands:
             with self.subTest(arguments=arguments), patch.object(nuwriter, "discover_devices") as discover:
-                self.assertEqual(nuwriter.main(arguments), 1)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980"] + arguments), 1)
                 discover.assert_not_called()
 
 
@@ -1808,11 +1810,11 @@ class CompatibleSafetyTests(unittest.TestCase):
                     ["-r", "nand", "0xFFFFFFF0", "0x10000", "out.bin"])
         for arguments in commands:
             with self.subTest(arguments=arguments), patch.object(nuwriter, "discover_devices") as discover:
-                self.assertEqual(nuwriter.main(arguments + ["--check"]), 1)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980"] + arguments + ["--check"]), 1)
                 discover.assert_not_called()
 
     def test_spi_nor_read_all_accepts_explicit_aligned_capacity(self):
-        self.assertEqual(nuwriter.main(["-r", "spinor", "all", "out.bin", "--flash-size", "0x800000", "--check"]), 0)
+        self.assertEqual(nuwriter.main(["--chip", "nuc980", "-r", "spinor", "all", "out.bin", "--flash-size", "0x800000", "--check"]), 0)
 
     def test_windows_cli_read_accepts_single_byte_lengths(self):
         for mode, read_size in (("NAND", 1), ("SPINOR", 1), ("SD", 4096), ("SPINAND", 4096)):
@@ -1883,9 +1885,9 @@ class CompatibleSafetyTests(unittest.TestCase):
                 writer.run.side_effect = lambda prepared, target=index: order.append(target)
             with patch.object(nuwriter, "discover_devices", return_value=devices), \
                  patch.object(nuwriter, "UsbSession", side_effect=sessions) as session_class, \
-                 patch.object(nuwriter, "Nuc980Writer", side_effect=writers):
+                 patch.object(nuwriter, "NucWriter", side_effect=writers):
                 session_class.device_identity.side_effect = lambda target: (target.bus, target.port_numbers)
-                self.assertEqual(nuwriter.main(["-m", "-w", "spinor", "0", str(path)]), 0)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", "-m", "-w", "spinor", "0", str(path)]), 0)
             self.assertEqual(order, [0, 1])
             for session, writer in zip(sessions, writers):
                 session.close.assert_called_once()
@@ -1900,7 +1902,7 @@ class CompatibleSafetyTests(unittest.TestCase):
                     ["-e", "nand", "all", "-o", "withbad"])
         for arguments in commands:
             with self.subTest(arguments=arguments), patch.object(nuwriter, "discover_devices") as discover:
-                self.assertEqual(nuwriter.main(arguments + ["--check"]), 1)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980"] + arguments + ["--check"]), 1)
                 discover.assert_not_called()
 
 
@@ -1917,46 +1919,47 @@ class PublicApiTests(unittest.TestCase):
 
     def test_program_api_routes_verify_to_existing_cli(self):
         with patch.object(nuwriter, "main", return_value=17) as main:
-            self.assertEqual(nuwriter.do_img_program(nuwriter.DEV_SPINAND, 0x200000, "image.bin", nuwriter.OPT_VERIFY), 17)
-        main.assert_called_once_with(["-w", "spinand", "0x200000", "image.bin", "-o", "verify"])
+            self.assertEqual(nuwriter.do_img_program(nuwriter.DEV_SPINAND, 0x200000, "image.bin", nuwriter.OPT_VERIFY, chip="nuc980"), 17)
+        main.assert_called_once_with(["-w", "spinand", "0x200000", "image.bin", "-o", "verify", "--chip", "nuc980"])
 
     def test_attach_and_pack_api_share_cli_settings(self):
         with patch.object(nuwriter, "main", return_value=0) as main:
-            self.assertEqual(nuwriter.do_attach("NUC980DK71YC.ini", check=True), 0)
-            self.assertEqual(main.call_args.args[0], ["-a", "NUC980DK71YC.ini", "--check"])
-            nuwriter.do_pack_program(nuwriter.DEV_SPINAND, "pack.bin", ddr="NUC980DK71YC.ini")
-            self.assertEqual(main.call_args.args[0], ["-w", "spinand", "pack.bin", "--ddr", "NUC980DK71YC.ini"])
-            nuwriter.do_pack("pack.json", media=nuwriter.DEV_SPINAND, output="pack.bin")
-            self.assertEqual(main.call_args.args[0], ["-p", "pack.json", "--media", "spinand", "--output", "pack.bin"])
+            self.assertEqual(nuwriter.do_attach("NUC980DK71YC.ini", chip="nuc980", check=True), 0)
+            self.assertEqual(main.call_args.args[0], ["-a", "NUC980DK71YC.ini", "--check", "--chip", "nuc980"])
+            nuwriter.do_pack_program(nuwriter.DEV_SPINAND, "pack.bin", chip="nuc980", ddr="NUC980DK71YC.ini")
+            self.assertEqual(main.call_args.args[0], ["-w", "spinand", "pack.bin", "--chip", "nuc980", "--ddr", "NUC980DK71YC.ini"])
+            nuwriter.do_pack("pack.json", chip="nuc980", media=nuwriter.DEV_SPINAND, output="pack.bin")
+            self.assertEqual(main.call_args.args[0], ["-p", "pack.json", "--chip", "nuc980", "--media", "spinand", "--output", "pack.bin"])
 
     def test_read_default_is_one_byte_and_zero_length_means_all(self):
         with patch.object(nuwriter, "main", return_value=0) as main:
-            nuwriter.do_img_read(nuwriter.DEV_NAND, 0, "out.bin")
-            self.assertEqual(main.call_args.args[0], ["-r", "nand", "0x0", "0x1", "out.bin"])
-            nuwriter.do_img_read("spinand", 0, "out.bin", length=0)
-            self.assertEqual(main.call_args.args[0], ["-r", "spinand", "all", "out.bin"])
+            nuwriter.do_img_read(nuwriter.DEV_NAND, 0, "out.bin", chip="nuc980")
+            self.assertEqual(main.call_args.args[0], ["-r", "nand", "0x0", "0x1", "out.bin", "--chip", "nuc980"])
+            nuwriter.do_img_read("spinand", 0, "out.bin", length=0, chip="nuc980")
+            self.assertEqual(main.call_args.args[0], ["-r", "spinand", "all", "out.bin", "--chip", "nuc980"])
 
     def test_erase_all_and_range_use_byte_arguments(self):
         with patch.object(nuwriter, "main", return_value=0) as main:
-            nuwriter.do_img_erase(nuwriter.DEV_SPINAND, 0)
-            self.assertEqual(main.call_args.args[0], ["-e", "spinand", "all"])
-            nuwriter.do_img_erase(nuwriter.DEV_SPINAND, 0x20000, 0x40000)
-            self.assertEqual(main.call_args.args[0], ["-e", "spinand", "0x20000", "0x40000"])
+            nuwriter.do_img_erase(nuwriter.DEV_SPINAND, 0, chip="nuc980")
+            self.assertEqual(main.call_args.args[0], ["-e", "spinand", "all", "--chip", "nuc980"])
+            nuwriter.do_img_erase(nuwriter.DEV_SPINAND, 0x20000, 0x40000, chip="nuc980")
+            self.assertEqual(main.call_args.args[0], ["-e", "spinand", "0x20000", "0x40000", "--chip", "nuc980"])
 
     def test_loader_api_passes_windows_settings_and_initialization(self):
         with patch.object(nuwriter, "main", return_value=0) as main:
-            nuwriter.do_img_program(nuwriter.DEV_SPINAND, 0, "loader.bin", image_type=nuwriter.IMG_UBOOT,
+            nuwriter.do_img_program(nuwriter.DEV_SPINAND, 0, "loader.bin", chip="nuc980", image_type=nuwriter.IMG_UBOOT,
                                    exec_addr=0x200, ddr="NUC980DK71YC.ini", initialize=True)
         self.assertEqual(main.call_args.args[0], ["-w", "spinand", "0x0", "loader.bin", "-a",
-                                                "--ddr", "NUC980DK71YC.ini", "--exec-addr", "512", "--type", "uboot"])
+                                                "--chip", "nuc980", "--ddr", "NUC980DK71YC.ini", "--exec-addr", "512", "--type", "uboot"])
 
     def test_invalid_api_requests_do_not_reach_hardware_entry(self):
         with patch.object(nuwriter, "main") as main:
-            for operation in (lambda: nuwriter.do_img_program("reg", 0, "image.bin"),
-                              lambda: nuwriter.do_img_erase("spinand", 1, 0),
-                              lambda: nuwriter.do_img_read("spinand", 1, "out.bin", length=0),
-                              lambda: nuwriter.do_img_program("spinand", 0, "image.bin", option="scrub"),
-                              lambda: nuwriter.do_img_program("spinand", 0, "image.bin", image_type=1)):
+            for operation in (lambda: nuwriter.do_img_program("reg", 0, "image.bin", chip="nuc980"),
+                              lambda: nuwriter.do_img_erase("spinand", 1, 0, chip="nuc980"),
+                              lambda: nuwriter.do_img_read("spinand", 1, "out.bin", length=0, chip="nuc980"),
+                              lambda: nuwriter.do_img_program("spinand", 0, "image.bin", option="scrub", chip="nuc980"),
+                              lambda: nuwriter.do_img_program("spinand", 0, "image.bin", image_type=1, chip="nuc980"),
+                              lambda: nuwriter.do_img_read("spinand", 0, "out.bin")):
                 with self.assertRaises(nuwriter.NuWriterError):
                     operation()
             main.assert_not_called()
@@ -1964,9 +1967,9 @@ class PublicApiTests(unittest.TestCase):
     def test_massproduct_switch_keeps_api_reads_single_target(self):
         with patch.object(nuwriter, "mp_mode", False), patch.object(nuwriter, "main", return_value=0) as main:
             nuwriter.switch_mp_mode(True)
-            nuwriter.do_img_program("spinand", 0, "image.bin")
+            nuwriter.do_img_program("spinand", 0, "image.bin", chip="nuc980")
             self.assertIn("-m", main.call_args.args[0])
-            nuwriter.do_img_read("spinand", 0, "out.bin")
+            nuwriter.do_img_read("spinand", 0, "out.bin", chip="nuc980")
             self.assertNotIn("-m", main.call_args.args[0])
 
     def test_no_arguments_prints_help_like_ma35_without_usb(self):
@@ -1977,13 +1980,13 @@ class PublicApiTests(unittest.TestCase):
     def test_api_argument_errors_do_not_exit_the_calling_process(self):
         with patch.object(nuwriter, "discover_devices") as discover:
             with self.assertRaisesRegex(nuwriter.NuWriterError, "Invalid API arguments"):
-                nuwriter.do_img_read(nuwriter.DEV_SD, 0, "out.bin", timeout=0, check=True)
+                nuwriter.do_img_read(nuwriter.DEV_SD, 0, "out.bin", chip="nuc980", timeout=0, check=True)
             discover.assert_not_called()
 
     def test_api_passes_usb_trace_without_changing_operation(self):
         with patch.object(nuwriter, "main", return_value=0) as main:
-            nuwriter.do_img_read("spinand", 0, "probe.bin", check=True, trace_usb=True)
-        main.assert_called_once_with(["-r", "spinand", "0x0", "0x1", "probe.bin", "--check", "--trace-usb"])
+            nuwriter.do_img_read("spinand", 0, "probe.bin", chip="nuc980", check=True, trace_usb=True)
+        main.assert_called_once_with(["-r", "spinand", "0x0", "0x1", "probe.bin", "--check", "--trace-usb", "--chip", "nuc980"])
 
 
 class DramDownloadTests(unittest.TestCase):
@@ -2000,7 +2003,7 @@ class DramDownloadTests(unittest.TestCase):
                 return result
             with patch.object(nuwriter, "preflight", side_effect=prepare), \
                  patch.object(nuwriter, "discover_devices") as discover:
-                result = nuwriter.main(["-a", "NUC980DK71YC.ini", "-w", "ddr", "0x8000", str(kernel),
+                result = nuwriter.main(["--chip", "nuc980", "-a", "NUC980DK71YC.ini", "-w", "ddr", "0x8000", str(kernel),
                                         "-o", "execute", "--dtb", str(dtb), "--dtb-addr", "0x1400000", "--check"])
             self.assertEqual(result, 0)
             self.assertEqual(captured, [(b"kernel", 0x8000, True, b"device tree", 0x1400000)])
@@ -2014,7 +2017,7 @@ class DramDownloadTests(unittest.TestCase):
         with patch.object(nuwriter, "discover_devices") as discover:
             for arguments in cases:
                 with self.subTest(arguments=arguments):
-                    self.assertEqual(nuwriter.main(arguments + ["--check"]), 1)
+                    self.assertEqual(nuwriter.main(["--chip", "nuc980"] + arguments + ["--check"]), 1)
             discover.assert_not_called()
 
     def test_dram_and_dtb_ranges_cannot_overlap(self):
@@ -2023,7 +2026,7 @@ class DramDownloadTests(unittest.TestCase):
             kernel.write_bytes(bytes(64))
             dtb.write_bytes(bytes(32))
             with patch.object(nuwriter, "discover_devices") as discover:
-                result = nuwriter.main(["-w", "ddr", "0x8000", str(kernel), "--dtb", str(dtb),
+                result = nuwriter.main(["--chip", "nuc980", "-w", "ddr", "0x8000", str(kernel), "--dtb", str(dtb),
                                         "--dtb-addr", "0x8020", "--check"])
             self.assertEqual(result, 1)
             discover.assert_not_called()
@@ -2031,9 +2034,9 @@ class DramDownloadTests(unittest.TestCase):
     def test_api_passes_dtb_settings_to_the_existing_cli(self):
         with patch.object(nuwriter, "main", return_value=0) as main:
             nuwriter.do_img_program(nuwriter.DEV_DDR_SRAM, 0x8000, "zImage", nuwriter.OPT_EXECUTE,
-                                   dtb="board.dtb", dtb_addr=0x1400000, check=True)
+                                   chip="nuc980", dtb="board.dtb", dtb_addr=0x1400000, check=True)
         main.assert_called_once_with(["-w", "ddr", "0x8000", "zImage", "-o", "execute", "--check",
-                                      "--dtb", "board.dtb", "--dtb-addr", str(0x1400000)])
+                                      "--chip", "nuc980", "--dtb", "board.dtb", "--dtb-addr", str(0x1400000)])
 
     def test_bootargs_override_changes_downloaded_copy_not_source_dtb(self):
         from pyfdt.pyfdt import FdtBlobParse
@@ -2048,7 +2051,7 @@ class DramDownloadTests(unittest.TestCase):
 
     def test_bootargs_without_dtb_or_invalid_dtb_fails_offline(self):
         with patch.object(nuwriter, "discover_devices") as discover:
-            self.assertEqual(nuwriter.main(["-w", "ddr", "0x8000", "zImage", "--bootargs", "root=ubi0:rootfs", "--check"]), 1)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-w", "ddr", "0x8000", "zImage", "--bootargs", "root=ubi0:rootfs", "--check"]), 1)
             discover.assert_not_called()
         with self.assertRaisesRegex(nuwriter.NuWriterError, "Cannot update DTB"):
             nuwriter.dtb_with_bootargs(b"not a DTB", "root=ubi0:rootfs")
@@ -2075,7 +2078,7 @@ class CompatiblePackTests(unittest.TestCase):
                 with self.subTest(mode=mode):
                     ini.write_text(f"[RUN]\nmode={mode}\npack=no\n[{mode}]\nrun={operation}\nimage_num=1\nimage0_type=data\nimage0_path={image}\n", encoding="utf-8")
                     with patch.object(nuwriter, "discover_devices") as discover:
-                        self.assertEqual(nuwriter.main(["-p", str(ini), "--output", str(output)]), 0)
+                        self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(ini), "--output", str(output)]), 0)
                     discover.assert_not_called()
                     self.assertEqual(nuwriter.parse_pack(output.read_bytes())[0][1], b"abc")
 
@@ -2087,9 +2090,9 @@ class CompatiblePackTests(unittest.TestCase):
             output = Path(directory) / "pack.bin"
             config.write_text(nuwriter.json.dumps({"image": [{"file": str(image), "offset": "0x200000", "type": 3}]}), encoding="utf-8")
             with patch.object(nuwriter.importlib, "import_module", side_effect=AssertionError("USB imported")):
-                self.assertEqual(nuwriter.main(["-p", str(config), "--media", "spinor", "--output", str(output), "--check"]), 0)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(config), "--media", "spinor", "--output", str(output), "--check"]), 0)
                 self.assertFalse(output.exists())
-                self.assertEqual(nuwriter.main(["-p", str(config), "--media", "spinor", "--output", str(output)]), 0)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(config), "--media", "spinor", "--output", str(output)]), 0)
             data = output.read_bytes()
             self.assertEqual(struct.unpack_from("<I", data)[0], 5)
             header, payload, kind = nuwriter.parse_pack(data)[0]
@@ -2100,14 +2103,14 @@ class CompatiblePackTests(unittest.TestCase):
             path = Path(directory) / "config.json"
             path.write_text(nuwriter.json.dumps({"mode": "SPINOR", "image": [{"file": "image.bin", "type": 1}]}), encoding="utf-8")
             with patch.object(nuwriter, "discover_devices") as discover:
-                self.assertEqual(nuwriter.main(["-p", str(path), "--check"]), 1)
+                self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(path), "--check"]), 1)
             discover.assert_not_called()
 
     def test_json_loader_requires_explicit_boot_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.json"
             path.write_text(nuwriter.json.dumps({"mode": "SPINOR", "image": [{"file": "loader.bin", "type": 2}]}), encoding="utf-8")
-            self.assertEqual(nuwriter.main(["-p", str(path), "--check"]), 1)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(path), "--check"]), 1)
 
     def test_json_loader_encodes_explicit_spinand_boot_settings(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2120,7 +2123,7 @@ class CompatiblePackTests(unittest.TestCase):
                                     "status_value": 255, "dummy_bytes": 1},
                         "image": [{"file": str(image), "offset": "0", "type": 2, "exec_addr": "0x200"}]}
             path.write_text(nuwriter.json.dumps(document), encoding="utf-8")
-            self.assertEqual(nuwriter.main(["-p", str(path)]), 0)
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(path)]), 0)
             header, payload, kind = nuwriter.parse_pack(output.read_bytes())[0]
             self.assertEqual(kind, 2)
             self.assertEqual(struct.unpack_from("<HH5B", payload, 16), (2048, 64, 107, 255, 255, 255, 1))
@@ -2634,6 +2637,335 @@ class SessionTests(unittest.TestCase):
             self.assertTrue(transport.trace)
             session.close()
         self.assertEqual(util.dispose_resources.call_count, 2)
+
+
+class Nuc970ProtocolTests(unittest.TestCase):
+    def nuc970_config(self, mode="SPINOR", operation="program", ddr="NUC972DF62Y.ini"):
+        settings = {
+            "RUN": {"chip": "nuc970", "mode": mode, "pack": "no", "all_device": "no"},
+            "DDR": {"ddr": ddr},
+            "SDRAM": {"sdram_path": "u-boot.bin", "exe_addr": "0x8000", "option": "download"},
+            "SPINOR": {"run": operation, "image_num": "1", "image0_type": "data", "image0_path": "image.bin",
+                       "image0_start_offset": "0x0", "image0_exe_addr": "0x0"},
+            "NAND": {"run": operation, "image_num": "1", "image0_type": "data", "image0_path": "image.bin",
+                     "image0_start_offset": "0x0", "image0_exe_addr": "0x0", "using_user_defined": "no"},
+            "SD": {"run": operation, "image_num": "1", "image0_type": "data", "image0_path": "image.bin",
+                   "image0_start_offset": "0x400", "image0_exe_addr": "0x0"},
+        }
+        return nuwriter.RunConfig(None, PROJECT_ROOT, settings=settings, chip="nuc970")
+
+    def test_all_nuc980_sys_cfg_files_select_valid_nuc980_xusb_binaries(self):
+        configs = sorted((PROJECT_ROOT / "sys_cfg" / "nuc980").glob("*.ini"))
+        self.assertGreaterEqual(len(configs), 20)
+        seen_xusb = set()
+        for path in configs:
+            with self.subTest(ini=path.name):
+                data, xusb_name = nuwriter.load_ddr(path, nuwriter.NUC980_PROFILE)
+                self.assertGreater(len(data), 0)
+                self.assertEqual(len(data) % 8, 0)
+                seen_xusb.add(xusb_name)
+                address, payload = nuwriter.load_xusb(PROJECT_ROOT / "xusb" / "nuc980" / xusb_name)
+                self.assertGreater(address, 0)
+                self.assertGreater(len(payload), 0)
+        self.assertGreaterEqual(len(seen_xusb), 3)
+        for name in nuwriter.NUC980_PROFILE.xusb_names.values():
+            address, payload = nuwriter.load_xusb(PROJECT_ROOT / "xusb" / "nuc980" / name)
+            self.assertGreater(address, 0)
+            self.assertGreater(len(payload), 0)
+
+    def test_legacy_unprefixed_sys_cfg_and_key_cfg_paths_resolve_to_chip_subdirs(self):
+        config980 = fixture_config()
+        expected980 = (PROJECT_ROOT / "sys_cfg" / "nuc980" / "NUC980DK71YC.ini").resolve()
+        self.assertEqual(nuwriter.ddr_input_path(config980, str(PROJECT_ROOT / "sys_cfg" / "NUC980DK71YC.ini")).resolve(), expected980)
+        self.assertEqual(nuwriter.ddr_input_path(config980, "sys_cfg/NUC980DK71YC.ini").resolve(), expected980)
+        config970 = self.nuc970_config()
+        expected_key = (PROJECT_ROOT / "key_cfg" / "nuc970" / "key.dat").resolve()
+        self.assertEqual(config970.resolve_key_path("key.dat").resolve(), expected_key)
+        self.assertEqual(config970.resolve_key_path("key_cfg/key.dat").resolve(), expected_key)
+        self.assertEqual(config970.resolve_key_path(str(PROJECT_ROOT / "key_cfg" / "key.dat")).resolve(), expected_key)
+
+    def test_all_nuc970_sys_cfg_files_select_valid_nuc970_xusb_binaries(self):
+        configs = sorted((PROJECT_ROOT / "sys_cfg" / "nuc970").glob("*.ini"))
+        self.assertGreaterEqual(len(configs), 50)
+        seen_xusb = set()
+        for path in configs:
+            with self.subTest(ini=path.name):
+                data, xusb_name = nuwriter.load_ddr(path, nuwriter.NUC970_PROFILE)
+                self.assertGreater(len(data), 0)
+                self.assertEqual(len(data) % 8, 0)
+                seen_xusb.add(xusb_name)
+                address, payload = nuwriter.load_xusb(PROJECT_ROOT / "xusb" / "nuc970" / xusb_name)
+                self.assertGreater(address, 0)
+                self.assertGreater(len(payload), 0)
+        self.assertEqual(seen_xusb, {"xusb16.bin", "xusb32.bin", "xusb64.bin", "xusb128.bin"})
+
+    def test_chip_flag_is_mandatory_and_cross_chip_configs_are_rejected(self):
+        with self.assertRaises(SystemExit) as raised:
+            nuwriter.main(["-a", "NUC980DK71YC.ini", "--check"])
+        self.assertEqual(raised.exception.code, 2)
+        for bad in (["--list", "--chip", "nuc970"], ["--version", "--chip", "nuc980"]):
+            with self.subTest(arguments=bad), self.assertRaises(SystemExit) as raised:
+                nuwriter.main(bad)
+            self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(nuwriter.main(["--chip", "nuc970", "-a", "NUC980DK71YC.ini", "--check"]), 1)
+        self.assertEqual(nuwriter.main(["--chip", "nuc980", "-a", "NUC972DF62Y.ini", "--check"]), 1)
+        self.assertEqual(nuwriter.main(["--chip", "nuc970", "-w", "spinand", "0", "image.bin", "--check"]), 1)
+        self.assertEqual(nuwriter.main(["--chip", "nuc980", "-w", "mtp", "key_cfg/nuc970/key.dat",
+                                        "--mtp-option", "aes", "--mtp-mode", "spinor", "--check"]), 1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "data.bin"
+            image.write_bytes(b"abc")
+            cfg = root / "pack.json"
+            cfg.write_text(nuwriter.json.dumps({"chip": "nuc970", "mode": "spinor",
+                                                "image": [{"file": str(image), "offset": "0", "type": "data"}]}))
+            self.assertEqual(nuwriter.main(["--chip", "nuc980", "-p", str(cfg), "--check"]), 1)
+            self.assertEqual(nuwriter.main(["--chip", "nuc970", "-p", str(cfg), "--check"]), 0)
+
+    def test_nuc970_attach_and_get_info_use_44_byte_info_without_0x90_ack(self):
+        config = self.nuc970_config(mode="NAND")
+        info_reply = nuwriter.NUC970_INFO_STRUCT.pack(64, 2048, 256, 1023, 2, 64, 0, 0xEF4018, 204800, 1000, 3)
+        transport = Mock()
+        transport.read_word.return_value = 0
+        transport.read.return_value = info_reply
+        reconnected = Mock()
+        reconnected.read.return_value = info_reply
+        writer = nuwriter.NucWriter(config, transport, reconnect=lambda: reconnected)
+        info = writer.attach()
+        self.assertEqual(info["nand_block_count"], 1024)
+        self.assertEqual(info["spi_id"], 0xEF4018)
+        self.assertEqual(info["emmc_blocks"], 204800)
+        self.assertEqual(info["mtp_number"], 3)
+        reconnected.set_type.assert_called_once_with(10)
+        reconnected.write.assert_called_once_with(config.user_info())
+        self.assertEqual(len(config.user_info()), 44)
+        reconnected.read.assert_called_once_with(44)
+        reconnected.expect.assert_not_called()
+
+    def test_nuc970_spinor_program_uses_burn_spi_progress_without_64k_batch_acks(self):
+        config = self.nuc970_config(mode="SPINOR", operation="program")
+        payload = b"\x5a" * 0x11000  # > 64 KiB to confirm no intermediate 64 KiB batch ACK is read
+        prepared = nuwriter.PreparedImage(nuwriter.Image(Path("data.bin"), 0, 0, 0x10000), payload, len(payload))
+        transport = Mock()
+        transport.read_word.side_effect = [0x85, 50, 100]  # command ack + Burn_SPI progress 50, 100
+        nuwriter.NucWriter(config, transport).program(prepared)
+        self.assertEqual(transport.read_word.call_count, 3)
+        self.assertEqual(transport.expect.call_count, 17)  # 17 * 4 KiB chunks
+
+    def test_nuc970_spinor_read_always_reads_4096_byte_wire_chunks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_path = Path(directory) / "read.bin"
+            config = self.nuc970_config(mode="SPINOR", operation="read")
+            config.compatible = True
+            config.byte_range = (0, 128)
+            config.ini.set("SPINOR", "read_path", str(out_path))
+            transport = Mock()
+            transport.read.return_value = b"N" * 128 + bytes(4096 - 128)
+            nuwriter.NucWriter(config, transport).read_flash()
+            transport.read.assert_called_once_with(4096, minimum=128)
+            self.assertEqual(out_path.read_bytes(), b"N" * 128)
+
+    def test_nuc970_spinor_pack_uses_16_byte_ibr_header_burn_spi_and_4096_verify(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            loader = root / "spl.bin"
+            data = root / "kernel.bin"
+            loader.write_bytes(b"L" * 100)
+            data.write_bytes(b"D" * 200)
+            pack_path = root / "nuc970_spinor.bin"
+            nuwriter.create_pack_file(
+                [{"file": loader, "type": "loader", "offset": "0x0", "exec_addr": "0x200", "ddr_ini": "NUC972DF62Y.ini"},
+                 {"file": data, "type": "data", "offset": "0x100000"}],
+                pack_path, media="spinor", chip="nuc970", resource_dir=PROJECT_ROOT,
+            )
+            blob = pack_path.read_bytes()
+            children = nuwriter.parse_pack(blob, nuwriter.NUC970_PROFILE)
+            self.assertEqual([c[2] for c in children], [2, 0])
+            loader_payload = children[0][1]
+            self.assertEqual(loader_payload[:4], b" TVN")
+            self.assertEqual(struct.unpack_from("<III", loader_payload, 4), (0x200, 100, 0xFFFFFFFF))
+            # DDR marker starts at offset 16 (not 32!)
+            self.assertEqual(struct.unpack_from("<I", loader_payload, 16)[0], 0xAA55AA55)
+
+            # Verify program_pack uses Burn_SPI (wait_progress -> 100 after each child)
+            config = self.nuc970_config(mode="SPINOR", operation="program_verify")
+            prepared = nuwriter.PreparedImage(nuwriter.Image(pack_path, 3, 0, 0), blob, len(blob))
+            transport = Mock()
+            transport.read_word.side_effect = [
+                0x85,  # command ack
+                16,    # pack head ack
+                len(loader_payload),  # child 0 chunk ack
+                100,   # child 0 Burn_SPI progress=100
+                200,   # child 1 chunk ack
+                100,   # child 1 Burn_SPI progress=100
+            ]
+            nuwriter.NucWriter(config, transport).program_pack(prepared)
+            self.assertEqual(transport.read_word.call_count, 6)
+
+            # Verify verify_pack reads fixed 4096-byte wire chunks and strips 16B header + DDR
+            verify_transport = Mock()
+            verify_transport.timeout = 10000
+            verify_transport.read.side_effect = [
+                b"L" * 100 + bytes(4096 - 100),
+                b"D" * 200 + bytes(4096 - 200),
+            ]
+            nuwriter.NucWriter(config, verify_transport).verify_pack(prepared)
+            self.assertEqual([call.args[0] for call in verify_transport.read.call_args_list], [4096, 4096])
+
+    def test_nuc970_sd_loader_uses_16_byte_padding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loader = Path(directory) / "spl.bin"
+            loader.write_bytes(b"S" * 64)
+            config = self.nuc970_config(mode="SD", operation="program")
+            prepared = nuwriter.prepare_image(config, nuwriter.Image(loader, 2, 0x200, 0x400))
+            expected_ddr = nuwriter.formatted_ddr(config)
+            self.assertEqual(prepared.init_size, len(expected_ddr))
+            self.assertEqual(prepared.data, expected_ddr + b"S" * 64 + b"\xff" * 16)
+
+
+class Nuc970CryptoMtpTests(unittest.TestCase):
+    def test_aes_ecb_matches_nist_fips197_appendix_c_and_zero_pads(self):
+        pt = bytes.fromhex("00112233445566778899aabbccddeeff")
+        self.assertEqual(
+            nuwriter.aes_ecb_encrypt(bytes.fromhex("000102030405060708090a0b0c0d0e0f"), pt),
+            bytes.fromhex("69c4e0d86a7b0430d8cdb78070b4c55a"),
+        )
+        self.assertEqual(
+            nuwriter.aes_ecb_encrypt(bytes.fromhex("000102030405060708090a0b0c0d0e0f1011121314151617"), pt),
+            bytes.fromhex("dda97ca4864cdfe06eaf70a0ec0d7191"),
+        )
+        self.assertEqual(
+            nuwriter.aes_ecb_encrypt(bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"), pt),
+            bytes.fromhex("8ea2b7ca516745bfeafc49904b496089"),
+        )
+        padded = nuwriter.aes_ecb_encrypt(bytes.fromhex("000102030405060708090a0b0c0d0e0f"), b"\x00\x11")
+        self.assertEqual(len(padded), 16)
+        self.assertEqual(
+            padded,
+            nuwriter.aes_ecb_encrypt(bytes.fromhex("000102030405060708090a0b0c0d0e0f"), b"\x00\x11" + bytes(14)),
+        )
+
+    def test_key_dat_loader_parses_all_key_sizes_and_rejects_all_zero_key(self):
+        bits, key_bytes = nuwriter.load_aes_key_file(PROJECT_ROOT / "key_cfg" / "nuc970" / "key.dat")
+        self.assertEqual((bits, len(key_bytes)), (256, 32))
+        self.assertEqual(struct.unpack_from("<I", key_bytes, 0)[0], 0x34125243)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            zero_key = root / "zero.dat"
+            zero_key.write_text("128\n0x0\n0x0\n0x0\n0x0\n")
+            with self.assertRaisesRegex(ValueError, "all zeros"):
+                nuwriter.load_aes_key_file(zero_key)
+            key128 = root / "k128.dat"
+            key128.write_text("128\n0x03020100\n0x07060504\n0x0b0a0908\n0x0f0e0d0c\n")
+            bits128, kb128 = nuwriter.load_aes_key_file(key128)
+            self.assertEqual((bits128, kb128), (128, bytes(range(16))))
+
+    def test_sha256_otp_key_word_swaps_each_32bit_word(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "app.bin"
+            source.write_bytes(b"nuc970-secure-boot")
+            digest = hashlib.sha256(b"nuc970-secure-boot").digest()
+            otp_key = nuwriter.sha256_otp_key(source)
+            self.assertEqual(len(otp_key), 32)
+            for i in range(8):
+                self.assertEqual(otp_key[i * 4:i * 4 + 4], digest[i * 4:i * 4 + 4][::-1])
+
+    def test_nuc970_aes_encryption_encrypts_loader_body_but_keeps_ddr_plaintext(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loader = Path(directory) / "spl.bin"
+            loader.write_bytes(b"PLAIN_LOADER_12345")
+            key_path = PROJECT_ROOT / "key_cfg" / "nuc970" / "key.dat"
+            _, key_bytes = nuwriter.load_aes_key_file(key_path)
+            expected_ct = nuwriter.aes_ecb_encrypt(key_bytes, b"PLAIN_LOADER_12345")
+            settings = {
+                "RUN": {"chip": "nuc970", "mode": "SPINOR", "pack": "no", "all_device": "no"},
+                "DDR": {"ddr": "NUC972DF62Y.ini"},
+                "SPINOR": {"run": "program", "image_num": "1", "image0_type": "loader",
+                           "image0_path": str(loader), "image0_start_offset": "0",
+                           "image0_exe_addr": "0x200", "image0_aes_key": str(key_path)},
+            }
+            config = nuwriter.RunConfig(None, PROJECT_ROOT, settings=settings, chip="nuc970")
+            prepared = nuwriter.prepare_image(config, config.images[0])
+            expected_ddr = nuwriter.formatted_ddr(config)
+            self.assertEqual(prepared.init_size, len(expected_ddr))
+            self.assertEqual(prepared.file_length, len(expected_ct))
+            self.assertEqual(prepared.data, expected_ddr + expected_ct)
+
+    def test_nuc970_standalone_mtp_program_protocol_and_error_codes(self):
+        key_path = PROJECT_ROOT / "key_cfg" / "nuc970" / "key.dat"
+        settings = {
+            "RUN": {"chip": "nuc970", "mode": "MTP", "pack": "no", "all_device": "no"},
+            "MTP": {"run": "program", "path": str(key_path), "option": "aes",
+                    "mode": "spinor", "encrypt": "yes", "lock": "no"},
+        }
+        config = nuwriter.RunConfig(None, PROJECT_ROOT, settings=settings, chip="nuc970")
+        config.initialize = False
+        prepared = nuwriter.preflight(config)
+        self.assertEqual(len(prepared["head"]), 44)
+        mode, opt_byte, lock_byte, key_len = struct.unpack_from("<3B5xI", prepared["head"])
+        self.assertEqual((mode, opt_byte, lock_byte, key_len), (3, 0x0D, 0, 32))
+
+        transport = Mock()
+        transport.read_word.return_value = nuwriter.MTP_KEY_SUCCESS
+        nuwriter.NucWriter(config, transport).run(prepared)
+        transport.set_type.assert_called_once_with(9)
+        transport.write.assert_called_once_with(prepared["head"])
+
+        # Already locked error
+        locked_transport = Mock()
+        locked_transport.read_word.return_value = nuwriter.MTP_LOCK_KEY
+        with self.assertRaisesRegex(nuwriter.NuWriterError, "already locked"):
+            nuwriter.NucWriter(config, locked_transport).run(prepared)
+
+        # Lock enabled expects MTP_LOCK_SUCCESS (0x84)
+        settings["MTP"]["lock"] = "yes"
+        lock_config = nuwriter.RunConfig(None, PROJECT_ROOT, settings=settings, chip="nuc970")
+        lock_config.initialize = False
+        lock_prepared = nuwriter.preflight(lock_config)
+        lock_transport = Mock()
+        lock_transport.read_word.return_value = nuwriter.MTP_LOCK_SUCCESS
+        nuwriter.NucWriter(lock_config, lock_transport).run(lock_prepared)
+
+        # Public API routing
+        with patch.object(nuwriter, "main", return_value=0) as main:
+            nuwriter.do_mtp_program(str(key_path), "aes", "spinor", chip="nuc970", mtp_lock=True)
+        main.assert_called_once_with(["-w", "mtp", str(key_path), "--mtp-lock", "--chip", "nuc970",
+                                      "--mtp-option", "aes", "--mtp-mode", "spinor"])
+
+    def test_nuc970_pack_with_pmtp_and_aes_encrypted_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            loader = root / "spl.bin"
+            loader.write_bytes(b"ENCRYPTED_SPL")
+            key_path = PROJECT_ROOT / "key_cfg" / "nuc970" / "key.dat"
+            pack_path = root / "secure.bin"
+            nuwriter.create_pack_file(
+                [{"file": loader, "type": "loader", "offset": "0x0", "exec_addr": "0x200",
+                  "ddr_ini": "NUC972DF62Y.ini", "aes_key": key_path},
+                 {"file": key_path, "type": "mtp", "mtp_option": "aes", "mtp_mode": "spinor",
+                  "mtp_encrypt": True, "mtp_lock": True}],
+                pack_path, media="spinor", chip="nuc970", resource_dir=PROJECT_ROOT,
+            )
+            blob = pack_path.read_bytes()
+            children = nuwriter.parse_pack(blob, nuwriter.NUC970_PROFILE)
+            self.assertEqual([c[2] for c in children], [2, 15])
+            mtp_header, mtp_payload, mtp_kind = children[1]
+            mtp_len, mtp_flags, _, _ = struct.unpack("<4I", mtp_header)
+            self.assertEqual(mtp_len, 32)
+            # mode=3, option=0, encrypt=0 (enabled), lock=1 -> 0x1003
+            self.assertEqual(mtp_flags, 0x1003)
+            _, expected_key = nuwriter.load_aes_key_file(key_path)
+            self.assertEqual(mtp_payload, expected_key)
+            # Verify pack_verify skips PMTP child and verifies encrypted loader payload
+            config = Nuc970ProtocolTests().nuc970_config(mode="SPINOR", operation="program_verify")
+            prepared = nuwriter.PreparedImage(nuwriter.Image(pack_path, 3, 0, 0), blob, len(blob))
+            expected_ct = nuwriter.aes_ecb_encrypt(expected_key, b"ENCRYPTED_SPL")
+            verify_transport = Mock()
+            verify_transport.timeout = 10000
+            verify_transport.read.return_value = expected_ct + bytes(4096 - len(expected_ct))
+            nuwriter.NucWriter(config, verify_transport).verify_pack(prepared)
+            verify_transport.read.assert_called_once_with(4096, timeout=10000)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
-# NUC980 PyNuWriter
+# NUC980 / NUC970 PyNuWriter
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
 
-NUC980 USB 燒錄與 RAM 下載工具。圖形介面操作請參閱 [GUI 手冊](gui/README.zh-TW.md)。
+NUC980 與 NUC970 / N9H30 USB 燒錄與 RAM 下載工具（NUC970 另支援 MTP/OTP 金鑰燒錄與 AES 加密）。圖形介面操作請參閱 [GUI 手冊](gui/README.zh-TW.md)。
 
 ## 下載獨立執行版本
 
@@ -116,14 +116,19 @@ python gui/app.py
 ## 連接板子
 
 將板子設為 USB Boot 模式，連接板子的 USB Device 埠與電腦。
-範例使用 NUC980DK71YC；請選用 `sys_cfg` 中符合板子的 DDR 設定。
+**所有燒錄、讀取、擦除、初始化與打包指令皆須明確指定 `--chip nuc980` 或 `--chip nuc970`**（不自動偵測）。
+NUC980 DDR 設定位於 `sys_cfg/nuc980/`（範例使用 `NUC980DK71YC.ini`），NUC970 / N9H30 DDR 設定位於 `sys_cfg/nuc970/`（範例使用 `NUC972DF62Y.ini`）。
 
 ```bash
 python nuwriter.py --list
 ```
 
 ```bash
-python nuwriter.py -a NUC980DK71YC.ini
+python nuwriter.py --chip nuc980 -a NUC980DK71YC.ini
+```
+
+```bash
+python nuwriter.py --chip nuc970 -a NUC972DF62Y.ini
 ```
 
 板子重置或重新上電後須再次初始化。**初始化可能透過 CH341 重置板子。** 未使用該轉接器時，請手動重置至 USB Boot 模式。
@@ -134,33 +139,33 @@ python nuwriter.py -a NUC980DK71YC.ini
 
 範例使用內附的 [sample 檔案](sample/README.zh-TW.md)。請先確認板子的位移與 Flash 設定。
 獨立版不含範例；請將原始碼 ZIP 中的 `sample` 複製到 CLI 執行檔旁。
-燒錄主 U-Boot 並驗證：
+燒錄主 U-Boot 並驗證（NUC980 SPI NAND 範例）：
 
 ```bash
-python nuwriter.py -w spinand 0x100000 sample/u-boot-spinand.bin -o verify
+python nuwriter.py --chip nuc980 -w spinand 0x100000 sample/u-boot-spinand.bin -o verify
 ```
 
 讀取指定範圍或整顆 Flash。輸出檔已存在時會覆寫：
 
 ```bash
-python nuwriter.py -r spinand 0x100000 0x20000 readback.bin
+python nuwriter.py --chip nuc980 -r spinand 0x100000 0x20000 readback.bin
 ```
 
 ```bash
-python nuwriter.py -r spinand all backup.bin
+python nuwriter.py --chip nuc980 -r spinand all backup.bin
 ```
 
 **全區擦除會刪除開機程式、設定與檔案系統，請先備份。** NAND／SPI NAND 會保留已標記的壞區塊。
 
 ```bash
-python nuwriter.py -e spinand all
+python nuwriter.py --chip nuc980 -e spinand all
 ```
 
-依需求替換 `spinand`。位址與長度單位為 byte，十六進位數值須加 `0x`。
+依需求替換媒體與 `--chip`。NUC980 支援 `ddr`、`nand`、`spinand`、`spinor`、`sd`/`emmc`；NUC970 支援 `ddr`、`nand`、`spinor`、`sd`/`emmc`、`mtp`（不支援 `spinand`）。位址與長度單位為 byte，十六進位數值須加 `0x`。
 
 | 媒體 | 寫入起點對齊 | 讀取起點對齊 | 擦除單位 |
 | --- | --- | --- | --- |
-| `nand`, `spinand` | Flash 區塊 | Flash 區塊 | Flash 區塊 |
+| `nand`, `spinand` (僅 NUC980) | Flash 區塊 | Flash 區塊 | Flash 區塊 |
 | `spinor` | 4 KiB | 64 KiB | 64 KiB |
 | `sd`, `emmc` | 512 bytes | 512 bytes | 不支援 |
 
@@ -168,18 +173,34 @@ SPI NOR 全區讀取須加上 `--flash-size`，指定容量（bytes）。
 讀取與驗證不涵蓋 OOB 或每個實體壞區塊。
 替換 UBI 映像前，須擦除舊 rootfs 區域，包含超出新映像長度的尾端。
 
+### NUC970 AES 加密與 MTP / OTP
+
+僅 `--chip nuc970` 支援 AES 映像加密（`--aes-key key.dat`）與 MTP/OTP 金鑰燒錄（`-w mtp`）：
+
+```bash
+# 使用 AES-128/192/256 key.dat 加密燒錄 Data 或 Loader（Loader 僅加密本體，不加密 DDR）
+python nuwriter.py --chip nuc970 -w spinor 0x0 loader.bin -t loader --exec-addr 0x200 --ddr NUC972DF62Y.ini --aes-key key_cfg/nuc970/key.dat -o verify
+```
+
+```bash
+# 燒錄 MTP AES 金鑰（--mtp-mode 支援 usb/emmc/nand/spinor；SHA 模式支援 usb_no_sha/usb_sha）
+python nuwriter.py --chip nuc970 -w mtp key_cfg/nuc970/key.dat --mtp-option aes --mtp-mode spinor
+```
+
+**警告：加入 `--mtp-lock` 會永久鎖定晶片 MTP 金鑰且不可復原，請務必確認金鑰正確後再使用。**
+
 ## 下載至 RAM
 
 下載並執行主 U-Boot；只下載時移除 `-o execute`：
 
 ```bash
-python nuwriter.py -w ddr 0x00e00000 sample/u-boot-spinand.bin -o execute
+python nuwriter.py --chip nuc980 -w ddr 0x00e00000 sample/u-boot-spinand.bin -o execute
 ```
 
 Linux 範例，rootfs 須已安裝於 SPI NAND：
 
 ```bash
-python nuwriter.py -w ddr 0x8000 sample/zImage -o execute --dtb sample/nuc980-iot-128m-bmc.dtb --dtb-addr 0x1400000 --bootargs "noinitrd ubi.mtd=3 root=ubi0:rootfs rootfstype=ubifs rw console=ttyS0,115200n8 init=/sbin/init mem=128M"
+python nuwriter.py --chip nuc980 -w ddr 0x8000 sample/zImage -o execute --dtb sample/nuc980-iot-128m-bmc.dtb --dtb-addr 0x1400000 --bootargs "noinitrd ubi.mtd=3 root=ubi0:rootfs rootfstype=ubifs rw console=ttyS0,115200n8 init=/sbin/init mem=128M"
 ```
 
 核心、DTB 與 rootfs 須互相搭配。此方式應執行原始 `zImage`，不可直接執行帶 U-Boot 標頭的 `uImage`。
@@ -195,11 +216,11 @@ cd sample
 ```
 
 ```bash
-python ../nuwriter.py -p config_spinand.json --check
+python ../nuwriter.py --chip nuc980 -p config_spinand.json --check
 ```
 
 ```bash
-python ../nuwriter.py -p config_spinand.json
+python ../nuwriter.py --chip nuc980 -p config_spinand.json
 ```
 
 SD1 請改用 `config_sd1.json`，CLI 媒體名稱為 `sd`。
@@ -212,27 +233,28 @@ cd ..
 初始化後燒錄並驗證 Pack：
 
 ```bash
-python nuwriter.py -w spinand sample/nuwriter-pack-spinand.bin --ddr NUC980DK71YC.ini -o verify
+python nuwriter.py --chip nuc980 -w spinand sample/nuwriter-pack-spinand.bin --ddr NUC980DK71YC.ini -o verify
 ```
 
 ```bash
-python nuwriter.py -w sd sample/nuwriter-pack-sd.bin --ddr NUC980DK71YC.ini -o verify
+python nuwriter.py --chip nuc980 -w sd sample/nuwriter-pack-sd.bin --ddr NUC980DK71YC.ini -o verify
 ```
 
 單板 Pack 燒錄不會自動執行全區擦除。
 Loader 須排第一，Flash 起點為 `0x0`、SD／eMMC 為 `0x400`；SPI NOR Pack 驗證要求各映像起點對齊 64 KiB。
-Pack 驗證不比較 Loader 標頭／DDR 資料、SD 分割區設定、OOB 或未使用區域。
+NUC970 Pack 採用 16-byte Boot Header，支援在 JSON 映像加入 `aes_key` 或 `type: "mtp"` 子項目。
+Pack 驗證不比較 Loader 標頭／DDR 資料、SD 分割區設定、MTP 項目、OOB 或未使用區域。
 
 ## 量產
 
 所有板子設為 USB Boot 模式並連接後，初始化及燒錄：
 
 ```bash
-python nuwriter.py -m -a NUC980DK71YC.ini
+python nuwriter.py --chip nuc980 -m -a NUC980DK71YC.ini
 ```
 
 ```bash
-python nuwriter.py -m -w spinand sample/nuwriter-pack-spinand.bin --ddr NUC980DK71YC.ini -o verify
+python nuwriter.py --chip nuc980 -m -w spinand sample/nuwriter-pack-spinand.bin --ddr NUC980DK71YC.ini -o verify
 ```
 
 **NAND／SPI NAND 會先擦除所有良好區塊再燒錄。** SPI NOR 與 SD／eMMC 不另做全裝置擦除。

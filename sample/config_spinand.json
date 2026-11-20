@@ -1,6 +1,6 @@
 {
     "mode": "spinand",
-    "ddr": "../sys_cfg/NUC980DK71YC.ini",
+    "ddr": "../sys_cfg/nuc980/NUC980DK71YC.ini",
     "output": "nuwriter-pack-spinand.bin",
     "image": [
         {

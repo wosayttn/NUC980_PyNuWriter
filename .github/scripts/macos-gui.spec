@@ -9,7 +9,7 @@ scripts = Path(SPECPATH)
 root = scripts.parents[1]
 packages = ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6",
             "pyte", "psutil", "wcwidth", "pyusb", "pyfdt", "pyserial")
-resources = [(str(root / name), name) for name in ("sys_cfg", "xusb")]
+resources = [(str(root / name), name) for name in ("sys_cfg", "xusb", "key_cfg")]
 resources += [(str(root / "gui/logo.png"), "."), (str(root / "pre-attach-hook.py"), ".")]
 for package in packages:
     resources += copy_metadata(package)

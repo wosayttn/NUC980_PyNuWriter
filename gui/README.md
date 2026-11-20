@@ -32,12 +32,12 @@ Windows screenshots below use example paths, addresses and results.
 ## Connect
 
 1. Put the board in USB Boot mode and connect its USB Device port to the PC.
-2. Select the board's **DDR Init** setting. Use **Refresh** to list devices.
+2. Select the target **Chip** (**NUC980** or **NUC970**), then select its **DDR Init** setting (`sys_cfg/nuc980/` for NUC980, `sys_cfg/nuc970/` for NUC970). Use **Refresh** to list devices.
 3. Select a **USB Device**, or use **Auto** for one connected board.
 4. Click **Re-Connect**. Repeat after resetting or power-cycling the board.
 
 **Re-Connect may reset the board through a CH341 adapter.** Without that adapter, reset manually into USB Boot mode.
-DDR settings are selected from `sys_cfg`; choose the file matching your board.
+When **NUC970** is selected, **Choose type** replaces **SPI NAND** with **MTP**, and Flash/Pack editors expose an optional **AES Key** field (`key_cfg/nuc970/*.dat`). **Locking MTP permanently prevents future key changes.**
 
 <p align="center">
 	<img src="screenshot/21_confirm_reconnect.png" alt="Re-Connect confirmation" width="450" />

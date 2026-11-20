@@ -577,6 +577,12 @@ class FlashPanel(QWidget):
         self.offset.textEdited.connect(self.update_image)
         form.addRow("Image execute address:", self.execute)
         form.addRow("Image start offset:", self.offset)
+        self.aes_key = TextLineEdit()
+        self.aes_key.setPlaceholderText("Optional (NUC970 key.dat)")
+        self.aes_key.textEdited.connect(self.update_image)
+        self.aes_key_label = QLabel("AES Key:")
+        self.aes_key_row = browse_control(self.aes_key, self.browse_aes_key)
+        form.addRow(self.aes_key_label, self.aes_key_row)
         self.verify_after = QCheckBox("Program + Verify")
         form.addRow("Option:", self.verify_after)
         right.addLayout(form)
@@ -616,6 +622,14 @@ class FlashPanel(QWidget):
         if filenames:
             self.images_table.selectRow(len(self.images) - 1)
 
+    def browse_aes_key(self):
+        key_dir = backend.ROOT / "key_cfg" / "nuc970"
+        default_dir = str(key_dir) if key_dir.is_dir() else ""
+        filename, _ = QFileDialog.getOpenFileName(self, "Choose AES key file", default_dir, "Key files (*.dat);;All files (*)")
+        if filename:
+            self.aes_key.setText(filename)
+            self.update_image()
+
     def switch_media(self, media):
         if self.current_media:
             self.media_images[self.current_media] = self.images
@@ -623,6 +637,7 @@ class FlashPanel(QWidget):
         self.images = self.media_images.setdefault(media, [])
         self.refresh()
         self.filename.clear()
+        self.aes_key.clear()
         if self.images:
             self.images_table.selectRow(0)
             self.select_image()
@@ -647,6 +662,7 @@ class FlashPanel(QWidget):
             self.images.pop(index)
             self.refresh()
             self.filename.clear()
+            self.aes_key.clear()
 
     def select_image(self):
         index = self.images_table.currentRow()
@@ -658,6 +674,7 @@ class FlashPanel(QWidget):
             self.kind_buttons[image.kind].setChecked(True)
             self.offset.setText(image.offset)
             self.execute.setText(image.execute)
+            self.aes_key.setText(image.aes_key)
             self.updating = False
             self.update_availability()
 
@@ -672,12 +689,14 @@ class FlashPanel(QWidget):
                 image.offset = self.offset.text()
             if self.execute.hasAcceptableInput():
                 image.execute = self.execute.text()
+            if self.aes_key.hasAcceptableInput():
+                image.aes_key = self.aes_key.text().strip()
             self.images_table.item(index, 1).setText(image.kind)
             self.images_table.item(index, 2).setText(image.offset)
         self.update_availability()
 
     def current_image(self):
-        validate_edits(self.offset, self.execute)
+        validate_edits(self.offset, self.execute, self.aes_key)
         self.update_image()
         index = self.images_table.currentRow()
         if not 0 <= index < len(self.images):
@@ -686,13 +705,19 @@ class FlashPanel(QWidget):
 
     def update_availability(self):
         media = self.window.media.currentText()
+        chip = self.window.current_chip()
         kind = next(name for name, radio in self.kind_buttons.items() if radio.isChecked())
         packed = kind == "Pack"
+        is_nuc970 = chip == "nuc970"
         self.offset.setEnabled(not packed)
         self.execute.setEnabled(not packed)
+        self.aes_key_label.setVisible(is_nuc970)
+        self.aes_key_row.setVisible(is_nuc970)
+        self.aes_key.setEnabled(is_nuc970 and kind in {"Data", "Loader"})
         self.verify_after.setEnabled(True)
-        self.verify_button.setEnabled(kind == "Data")
-        self.verify_button.setToolTip("Read back and compare; never programs. Data images only.")
+        has_aes = is_nuc970 and bool(self.aes_key.text().strip())
+        self.verify_button.setEnabled(kind == "Data" and not has_aes)
+        self.verify_button.setToolTip("Read back and compare; never programs. Unencrypted Data images only.")
         self.erase_button.setEnabled(media != "SD/eMMC")
         self.erase_button.setVisible(media != "SD/eMMC")
         self.format_button.setVisible(media == "SD/eMMC")
@@ -823,21 +848,97 @@ class RamPanel(QWidget):
             self.window.error(str(error))
 
 
+class MtpPanel(QWidget):
+    def __init__(self, window):
+        super().__init__()
+        self.window = window
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.option = QComboBox()
+        self.option.addItems(["AES", "SHA"])
+        self.option.currentTextChanged.connect(self.update_modes)
+        form.addRow("MTP Option:", self.option)
+        self.mode = QComboBox()
+        form.addRow("MTP Mode:", self.mode)
+        self.encrypt_enabled = QCheckBox("Enable MTP encryption")
+        self.encrypt_enabled.setChecked(True)
+        form.addRow("Encryption:", self.encrypt_enabled)
+        self.filename = TextLineEdit()
+        default_key = backend.ROOT / "key_cfg" / "nuc970" / "key.dat"
+        if default_key.is_file():
+            self.filename.setText(str(default_key))
+        form.addRow("Key / Binary file:", browse_control(self.filename, self.browse))
+        self.lock_mtp = QCheckBox("Lock MTP key permanently (irreversible)")
+        form.addRow("Lock:", self.lock_mtp)
+        warning = QLabel("Warning: Locking MTP permanently prevents future key modifications on the chip.")
+        warning.setStyleSheet("color: #c62828;")
+        warning.setWordWrap(True)
+        form.addRow("", warning)
+        layout.addLayout(form)
+        layout.addStretch()
+        row = QHBoxLayout()
+        row.addStretch()
+        self.burn_button = button("Burn MTP", QStyle.StandardPixmap.SP_DialogApplyButton, self.burn)
+        row.addWidget(self.burn_button)
+        layout.addLayout(row)
+        self.update_modes()
+
+    def update_modes(self):
+        current = self.mode.currentText()
+        self.mode.clear()
+        items = list(backend.MTP_AES_MODES) if self.option.currentText() == "AES" else list(backend.MTP_SHA_MODES)
+        self.mode.addItems(items)
+        if current in items:
+            self.mode.setCurrentText(current)
+
+    def browse(self):
+        if self.option.currentText() == "AES":
+            key_dir = backend.ROOT / "key_cfg" / "nuc970"
+            default_dir = str(key_dir) if key_dir.is_dir() else ""
+            filename, _ = QFileDialog.getOpenFileName(self, "Choose AES key file", default_dir, "Key files (*.dat);;All files (*)")
+        else:
+            filename, _ = QFileDialog.getOpenFileName(self, "Choose binary file for SHA-256", "", "Binary files (*.bin);;All files (*)")
+        if filename:
+            self.filename.setText(filename)
+
+    def burn(self):
+        try:
+            validate_edits(self.filename)
+            command = backend.mtp_program(
+                self.window.target(), self.filename.text(),
+                self.option.currentText(), self.mode.currentText(),
+                encrypt_enabled=self.encrypt_enabled.isChecked(),
+                lock=self.lock_mtp.isChecked(),
+            )
+            warning = (f"Program NUC970 MTP ({self.option.currentText()} / {self.mode.currentText()})?"
+                       "\nVerify the key file carefully before proceeding.")
+            if self.lock_mtp.isChecked():
+                warning = ("WARNING: LOCK MTP IS SELECTED!\nOnce locked, the NUC970 MTP key CANNOT be reprogrammed ever again.\n\n"
+                           + warning)
+            self.window.submit(command, warning=warning)
+        except (ValueError, OSError) as error:
+            self.window.error(str(error))
+
+
 class PackImageDialog(QDialog):
-    def __init__(self, image=None, parent=None):
+    def __init__(self, image=None, parent=None, chip="nuc980"):
         super().__init__(parent)
         self.setWindowTitle("NuWriter - Pack Image")
-        self.resize(550, 470)
+        self.resize(550, 500)
+        self.chip = chip
         self.original = dict(image or {})
         layout = QVBoxLayout(self)
         form = QFormLayout()
-        self.filename = TextLineEdit(str(self.original.get("file", "")))
+        self.filename = TextLineEdit(str(self.original.get("file", self.original.get("key_file", ""))))
         form.addRow("Image file:", browse_control(self.filename, self.browse))
         self.kind = QComboBox()
-        self.kind.addItems(["data", "env", "loader", "linux", "partition"])
+        items = ["data", "env", "loader", "linux", "partition"]
+        if chip == "nuc970":
+            items.append("mtp")
+        self.kind.addItems(items)
         kind = self.original.get("type", "data")
         if type(kind) is int:
-            kind = {0: "data", 2: "loader", 3: "linux"}.get(kind, str(kind))
+            kind = {0: "data", 2: "loader", 3: "linux", 15: "mtp"}.get(kind, str(kind))
         kind = {"environment": "env", "uboot": "loader"}.get(str(kind).lower(), str(kind).lower())
         if self.kind.findText(kind) == -1:
             self.kind.addItem(kind)
@@ -847,10 +948,17 @@ class PackImageDialog(QDialog):
         form.addRow("Image Type:", self.kind)
         form.addRow("Start offset (bytes):", self.offset)
         form.addRow("Execute address:", self.execute)
+        self.aes_key = TextLineEdit(str(self.original.get("aes_key", "")))
+        self.aes_key.setPlaceholderText("Optional (NUC970 key.dat)")
+        if chip == "nuc970":
+            form.addRow("AES Key:", browse_control(self.aes_key, self.browse_aes_key))
         layout.addLayout(form)
         layout.addWidget(QLabel("Additional JSON parameters:"))
         self.parameters = QPlainTextEdit()
-        extras = {key: value for key, value in self.original.items() if key not in {"file", "type", "offset", "address", "exec_addr", "execute_address"}}
+        excluded = {"file", "type", "offset", "address", "exec_addr", "execute_address"}
+        if chip == "nuc970":
+            excluded.add("aes_key")
+        extras = {key: value for key, value in self.original.items() if key not in excluded}
         self.parameters.setPlainText(json.dumps(extras, indent=2))
         layout.addWidget(self.parameters)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -866,9 +974,16 @@ class PackImageDialog(QDialog):
         if filename:
             self.filename.setText(filename)
 
+    def browse_aes_key(self):
+        key_dir = backend.ROOT / "key_cfg" / "nuc970"
+        default_dir = str(key_dir) if key_dir.is_dir() else ""
+        filename, _ = QFileDialog.getOpenFileName(self, "Choose AES key file", default_dir, "Key files (*.dat);;All files (*)")
+        if filename:
+            self.aes_key.setText(filename)
+
     def validate(self):
         try:
-            validate_edits(self.filename, self.offset, self.execute)
+            validate_edits(self.filename, self.offset, self.execute, self.aes_key)
             extra = json.loads(self.parameters.toPlainText())
             if not isinstance(extra, dict):
                 raise ValueError("Additional parameters must be a JSON object.")
@@ -880,6 +995,8 @@ class PackImageDialog(QDialog):
                 raise ValueError("Select an image file.")
             if image["type"] == "loader" or "exec_addr" in self.original or "execute_address" in self.original:
                 image["exec_addr"] = hex(backend.number(self.execute.text()))
+            if self.chip == "nuc970" and self.aes_key.text().strip():
+                image["aes_key"] = self.aes_key.text().strip()
             self.result_image = image
             self.accept()
         except (ValueError, TypeError) as error:
@@ -895,7 +1012,7 @@ class PackPanel(QWidget):
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         self.media = QComboBox()
-        self.media.addItems(["SPI NAND", "SPI NOR", "NAND", "SD/eMMC"])
+        self.media.addItems(backend.CHIP_PACK_MEDIA["nuc980"])
         header.addWidget(QLabel("Pack media:"))
         header.addWidget(self.media)
         header.addStretch()
@@ -917,14 +1034,24 @@ class PackPanel(QWidget):
         row.addWidget(button("Output", QStyle.StandardPixmap.SP_DialogSaveButton, self.output))
         layout.addLayout(row)
 
+    def update_for_chip(self, chip):
+        current = self.media.currentText()
+        items = backend.CHIP_PACK_MEDIA[chip]
+        self.media.blockSignals(True)
+        self.media.clear()
+        self.media.addItems(items)
+        if current in items:
+            self.media.setCurrentText(current)
+        self.media.blockSignals(False)
+
     def refresh(self):
         images = self.document.get("image", [])
         self.images_table.setRowCount(len(images))
         for index, image in enumerate(images):
-            for column, value in enumerate((Path(str(image.get("file", "Partition"))).name,
+            for column, value in enumerate((Path(str(image.get("file", image.get("key_file", "Partition")))).name,
                                              str(image.get("type", "data")), str(image.get("offset", "0")))):
                 item = QTableWidgetItem(value)
-                item.setToolTip(str(image.get("file", value)))
+                item.setToolTip(str(image.get("file", image.get("key_file", value))))
                 self.images_table.setItem(index, column, item)
         self.config_label.setText(str(self.config_path) if self.config_path else "Unsaved configuration")
 
@@ -942,7 +1069,13 @@ class PackPanel(QWidget):
                 raise ValueError("Pack JSON must contain an image array.")
             if not all(isinstance(image, dict) for image in document["image"]):
                 raise ValueError("Every pack image must be an object.")
-            mode = str(document.get("mode", document.get("media", "spinand"))).lower()
+            declared_chip = document.get("chip")
+            if declared_chip is not None:
+                if not isinstance(declared_chip, str) or declared_chip.strip().lower() not in {"nuc970", "nuc980"}:
+                    raise ValueError(f"Unsupported pack chip: {declared_chip}")
+                if declared_chip.strip().lower() != self.window.current_chip():
+                    raise ValueError(f"Pack JSON is for {declared_chip.upper()}; switch Chip to {declared_chip.upper()} first.")
+            mode = str(document.get("mode", document.get("media", backend.MEDIA[self.media.itemText(0)]))).lower()
             selected = next((name for name, value in backend.MEDIA.items() if value == mode), None)
             if mode == "emmc":
                 selected = "SD/eMMC"
@@ -963,7 +1096,7 @@ class PackPanel(QWidget):
             destination = backend.output_file(filename)
             if self.config_path and destination.parent != self.config_path.parent:
                 raise ValueError("Save in the original configuration directory to preserve relative input paths.")
-            document = backend.pack_document(self.document, self.media.currentText())
+            document = backend.pack_document(self.document, self.media.currentText(), chip=self.window.current_chip())
             backend.protect_pack_inputs(document, destination.parent, destination)
             destination.write_text(json.dumps(document, indent=4) + "\n", encoding="utf-8")
             self.document = document
@@ -975,7 +1108,7 @@ class PackPanel(QWidget):
             return False
 
     def add(self):
-        dialog = PackImageDialog(parent=self.window)
+        dialog = PackImageDialog(parent=self.window, chip=self.window.current_chip())
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.document["image"].append(dialog.result_image)
             self.refresh()
@@ -983,7 +1116,7 @@ class PackPanel(QWidget):
     def modify(self):
         index = self.images_table.currentRow()
         if 0 <= index < len(self.document["image"]):
-            dialog = PackImageDialog(self.document["image"][index], self.window)
+            dialog = PackImageDialog(self.document["image"][index], self.window, chip=self.window.current_chip())
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 self.document["image"][index] = dialog.result_image
                 self.refresh()
@@ -1000,13 +1133,14 @@ class PackPanel(QWidget):
         filename, _ = QFileDialog.getSaveFileName(self, "Output pack", str(self.config_path.parent / "pack.bin"), "Binary files (*.bin)")
         if filename:
             try:
-                document = backend.pack_document(self.document, self.media.currentText())
+                chip = self.window.current_chip()
+                document = backend.pack_document(self.document, self.media.currentText(), chip=chip)
                 backend.protect_pack_inputs(document, self.config_path.parent, filename, self.config_path)
                 with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix=".nuwriter-gui-",
                                                  dir=self.config_path.parent, encoding="utf-8", delete=False) as snapshot:
                     self.window.pack_snapshot = Path(snapshot.name)
                     json.dump(document, snapshot)
-                command = backend.pack(self.window.pack_snapshot, filename, self.media.currentText())
+                command = backend.pack(self.window.pack_snapshot, filename, self.media.currentText(), chip=chip)
                 self.window.submit(command, warning=f"Replace {filename}?" if Path(filename).exists() else "")
             except (ValueError, OSError) as error:
                 self.window.cleanup_snapshot()
@@ -1021,7 +1155,7 @@ class MassPanel(QWidget):
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.media = QComboBox()
-        self.media.addItems(["SPI NAND", "SPI NOR", "NAND", "SD/eMMC"])
+        self.media.addItems(backend.CHIP_PACK_MEDIA["nuc980"])
         self.filename = TextLineEdit()
         form.addRow("Media:", self.media)
         form.addRow("Pack file:", browse_control(self.filename, self.browse))
@@ -1037,6 +1171,17 @@ class MassPanel(QWidget):
         row.addStretch()
         row.addWidget(button("Program", QStyle.StandardPixmap.SP_DialogApplyButton, self.program))
         layout.addLayout(row)
+
+    def update_for_chip(self, chip):
+        current = self.media.currentText()
+        items = backend.CHIP_PACK_MEDIA[chip]
+        self.media.blockSignals(True)
+        self.media.clear()
+        self.media.addItems(items)
+        if current in items:
+            self.media.setCurrentText(current)
+        self.media.blockSignals(False)
+        self.state.setText(f"All connected {chip.upper()} targets")
 
     def clear_results(self):
         self.results.setRowCount(0)
@@ -1076,10 +1221,11 @@ class MassPanel(QWidget):
     def program(self):
         try:
             validate_edits(self.filename)
+            chip_label = self.window.current_chip().upper()
             command = backend.program(self.window.target(), self.media.currentText(), backend.ImageEntry(self.filename.text(), "Pack"), verify=True)
             command.label = f"{self.media.currentText()} mass production"
             erase = "NAND/SPI NAND performs Erase All before burning, including existing boot, environment and filesystem data.\n" if self.media.currentText() in {"NAND", "SPI NAND"} else ""
-            self.window.submit(command, warning="Program and verify this pack on ALL connected NUC980 targets?\n" + erase + "Devices are processed sequentially. Failed boards are not retried; remaining boards continue.")
+            self.window.submit(command, warning=f"Program and verify this pack on ALL connected {chip_label} targets?\n" + erase + "Devices are processed sequentially. Failed boards are not retried; remaining boards continue.")
         except (ValueError, OSError) as error:
             self.window.error(str(error))
 
@@ -1244,21 +1390,22 @@ class MainWindow(QMainWindow):
         controls_layout = QVBoxLayout(self.controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         target_row = QHBoxLayout()
+        target_row.addWidget(QLabel("Chip:"))
+        self.chip = QComboBox()
+        self.chip.addItems(list(backend.CHIPS))
+        self.chip.setCurrentText("NUC980")
+        target_row.addWidget(self.chip)
+        self.chip_ddr = {"nuc980": "NUC980DK71YC.ini", "nuc970": "NUC972DF62Y.ini"}
+        self.active_chip = "nuc980"
         target_row.addWidget(QLabel("Choose type:"))
         self.media = QComboBox()
-        self.media.addItems(["SDRAM", "SPI NOR", "NAND", "SD/eMMC", "SPI NAND", "Pack", "Mass Production"])
+        self.media.addItems(backend.CHIP_MEDIA["nuc980"])
         self.media.setCurrentText("SDRAM")
         self.media.setFixedWidth((self.media.sizeHint().width() * 5 + 3) // 4)
         target_row.addWidget(self.media)
         target_row.addWidget(QLabel("DDR Init:"))
         self.ddr = QComboBox()
-        for path in sorted((backend.ROOT / "sys_cfg").glob("*.ini")):
-            self.ddr.addItem(path.name, (Path("sys_cfg") / path.name).as_posix())
-        index = self.ddr.findText(str(self.settings.value("ddr", "NUC980DK71YC.ini")))
-        if index < 0:
-            index = self.ddr.findText("NUC980DK71YC.ini")
-        if index >= 0:
-            self.ddr.setCurrentIndex(index)
+        self.populate_ddr("nuc980", str(self.settings.value("ddr", "NUC980DK71YC.ini")))
         target_row.addWidget(self.ddr, 1)
         self.reconnect_button = button("Re-Connect", QStyle.StandardPixmap.SP_BrowserReload, self.attach)
         target_row.addWidget(self.reconnect_button)
@@ -1276,11 +1423,13 @@ class MainWindow(QMainWindow):
         self.pages = MediaPages()
         self.flash = FlashPanel(self)
         self.ram = RamPanel(self)
+        self.mtp = MtpPanel(self)
         self.pack = PackPanel(self)
         self.mass = MassPanel(self)
         self.runner.mass_update.connect(self.mass.update_result)
         self.pages.addWidget(self.flash)
         self.pages.addWidget(self.ram)
+        self.pages.addWidget(self.mtp)
         self.pages.addWidget(self.pack)
         self.pages.addWidget(self.mass)
         controls_layout.addWidget(self.pages, 1)
@@ -1313,13 +1462,65 @@ class MainWindow(QMainWindow):
         self.log_button.setToolTip("Show or hide operation log")
         device_row.addWidget(self.log_button)
         outer.addLayout(footer)
+        self.chip.currentTextChanged.connect(self.change_chip)
         self.media.currentTextChanged.connect(self.change_media)
         self.change_media()
+        self.flash.update_availability()
         self.restore_settings()
         if self.settings.load_error:
             self.append_output("Error: settings could not be loaded; defaults are in use: " + self.settings.load_error)
 
+    def current_chip(self):
+        return backend.CHIPS.get(self.chip.currentText(), "nuc980")
+
+    def populate_ddr(self, chip, preferred=""):
+        self.ddr.blockSignals(True)
+        self.ddr.clear()
+        directory = backend.ROOT / "sys_cfg" / chip
+        prefix = Path("sys_cfg") / chip
+        if directory.is_dir():
+            for path in sorted(directory.glob("*.ini")):
+                self.ddr.addItem(path.name, (prefix / path.name).as_posix())
+        default_name = "NUC972DF62Y.ini" if chip == "nuc970" else "NUC980DK71YC.ini"
+        index = self.ddr.findText(preferred) if preferred else -1
+        if index < 0:
+            index = self.ddr.findText(default_name)
+        if index < 0 and self.ddr.count():
+            index = 0
+        if index >= 0:
+            self.ddr.setCurrentIndex(index)
+        self.ddr.blockSignals(False)
+
+    def change_chip(self):
+        if self.ddr.currentText():
+            self.chip_ddr[self.active_chip] = self.ddr.currentText()
+        chip = self.current_chip()
+        self.active_chip = chip
+        self.setWindowTitle(f"Nuvoton NuWriter - {chip.upper()}")
+        self.populate_ddr(chip, self.chip_ddr.get(chip, ""))
+        current_media = self.media.currentText()
+        items = backend.CHIP_MEDIA[chip]
+        self.media.blockSignals(True)
+        self.media.clear()
+        self.media.addItems(items)
+        self.media.setCurrentText(current_media if current_media in items else "SDRAM")
+        self.media.blockSignals(False)
+        self.pack.update_for_chip(chip)
+        self.mass.update_for_chip(chip)
+        self.change_media()
+        self.flash.update_availability()
+
     def restore_settings(self):
+        saved_chip_ddr = self.settings.value("chip_ddr", {})
+        if isinstance(saved_chip_ddr, dict):
+            for key in ("nuc980", "nuc970"):
+                if isinstance(saved_chip_ddr.get(key), str) and saved_chip_ddr[key]:
+                    self.chip_ddr[key] = saved_chip_ddr[key]
+        main = self.settings.value("main", {})
+        if isinstance(main, dict):
+            saved_chip = main.get("chip")
+            if isinstance(saved_chip, str) and self.chip.findText(saved_chip) >= 0:
+                self.chip.setCurrentText(saved_chip)
         saved = self.settings.value("flash_images", {})
         if isinstance(saved, dict):
             for media, images in saved.items():
@@ -1333,8 +1534,11 @@ class MainWindow(QMainWindow):
                         filename = image["filename"]
                         if not isinstance(filename, str) or any(ord(character) < 32 for character in filename):
                             continue
+                        aes_key = image.get("aes_key", "")
+                        if not isinstance(aes_key, str) or any(ord(character) < 32 for character in aes_key):
+                            aes_key = ""
                         restored.append(backend.ImageEntry(filename, image["kind"], hex(backend.number(image["offset"])),
-                                                           hex(backend.number(image["execute"]))))
+                                                           hex(backend.number(image["execute"])), aes_key))
                     except (KeyError, TypeError, ValueError):
                         continue
                 self.flash.media_images[media] = restored
@@ -1345,6 +1549,9 @@ class MainWindow(QMainWindow):
         restore_widgets(self.flash, self.settings.value("flash", {}))
         self.flash.updating = False
         restore_widgets(self.ram, self.settings.value("ram", {}))
+        restore_widgets(self.mtp, self.settings.value("mtp", {}))
+        self.mtp.update_modes()
+        restore_widgets(self.mtp, self.settings.value("mtp", {}))
         restore_widgets(self.mass, self.settings.value("mass", {}))
         packed = self.settings.value("pack", {})
         if isinstance(packed, dict):
@@ -1359,7 +1566,6 @@ class MainWindow(QMainWindow):
             row = packed.get("row", -1)
             if type(row) is int and 0 <= row < self.pack.images_table.rowCount():
                 self.pack.images_table.selectRow(row)
-        main = self.settings.value("main", {})
         if isinstance(main, dict):
             device = main.get("devices")
             if isinstance(device, str) and QRegularExpression(r"\A\d+:\d+(?:\.\d+)*\z").match(device).hasMatch():
@@ -1376,8 +1582,12 @@ class MainWindow(QMainWindow):
         self.flash.update_image()
         if self.flash.current_media:
             self.flash.media_images[self.flash.current_media] = self.flash.images
+        if self.ddr.currentText():
+            self.chip_ddr[self.current_chip()] = self.ddr.currentText()
         self.settings.setValue("main", capture_widgets(self))
+        self.settings.setValue("chip_ddr", dict(self.chip_ddr))
         self.settings.setValue("ram", capture_widgets(self.ram))
+        self.settings.setValue("mtp", capture_widgets(self.mtp))
         self.settings.setValue("flash", capture_widgets(self.flash))
         self.settings.setValue("flash_media", self.flash.current_media)
         self.settings.setValue("flash_row", self.flash.images_table.currentRow())
@@ -1493,7 +1703,7 @@ class MainWindow(QMainWindow):
 
     def change_media(self):
         media = self.media.currentText()
-        pages = {"SDRAM": self.ram, "Pack": self.pack, "Mass Production": self.mass}
+        pages = {"SDRAM": self.ram, "MTP": self.mtp, "Pack": self.pack, "Mass Production": self.mass}
         self.pages.setCurrentWidget(pages.get(media, self.flash))
         if media not in pages:
             self.flash.switch_media(media)
@@ -1503,7 +1713,7 @@ class MainWindow(QMainWindow):
         mass = self.media.currentText() == "Mass Production"
         ddr = self.ddr.currentData()
         return backend.Target(str(backend.ROOT / ddr) if ddr else "", "" if mass else str(self.devices.currentData() or ""),
-                              self.runner.trace_enabled, massproduct=mass)
+                              self.runner.trace_enabled, massproduct=mass, chip=self.current_chip())
 
     def attach(self):
         try:

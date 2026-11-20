@@ -1972,7 +1972,7 @@ class QtTests(unittest.TestCase):
             os.chdir(self.root)
             with patch.object(app.QFileDialog, "getOpenFileName") as browse:
                 window = self.window()
-                expected = sorted(path.name for path in (backend.ROOT / "sys_cfg").glob("*.ini"))
+                expected = sorted(path.name for path in (backend.ROOT / "sys_cfg" / "nuc980").glob("*.ini"))
                 self.assertEqual([window.ddr.itemText(index) for index in range(window.ddr.count())], expected)
                 self.assertFalse(window.ddr.isEditable())
                 self.assertFalse(hasattr(window, "select_ddr"))
@@ -1980,10 +1980,10 @@ class QtTests(unittest.TestCase):
                 for index in range(window.ddr.count()):
                     relative = Path(window.ddr.itemData(index))
                     self.assertFalse(relative.is_absolute())
-                    self.assertEqual(relative.parent, Path("sys_cfg"))
+                    self.assertEqual(relative.parent, Path("sys_cfg") / "nuc980")
                 window.ddr.setCurrentIndex((window.ddr.currentIndex() + 1) % window.ddr.count())
                 selected = window.ddr.currentText()
-                absolute = backend.ROOT / "sys_cfg" / selected
+                absolute = backend.ROOT / "sys_cfg" / "nuc980" / selected
                 self.assertEqual(Path(window.target().ddr), absolute)
                 self.assertIn(str(absolute), backend.attach(window.target()).arguments)
                 window.close()
@@ -2003,7 +2003,7 @@ class QtTests(unittest.TestCase):
         settings.sync()
         window = self.window()
         self.assertEqual(window.ddr.currentText(), "NUC980DK71YC.ini")
-        self.assertEqual(Path(window.target().ddr), backend.ROOT / "sys_cfg" / "NUC980DK71YC.ini")
+        self.assertEqual(Path(window.target().ddr), backend.ROOT / "sys_cfg" / "nuc980" / "NUC980DK71YC.ini")
         self.assertEqual(window.ddr.findText(external.name), -1)
         window.close()
         self.assertFalse(window.settings.contains("ddr_path"))
@@ -2028,7 +2028,7 @@ class QtTests(unittest.TestCase):
         sample = backend.ROOT / "sample"
         image = sample / "u-boot-spinand.bin"
         self.assertTrue(image.is_file(), "Commit sample images with the integration tests")
-        target = backend.Target(str(backend.ROOT / "sys_cfg" / "NUC980DK71YC.ini"))
+        target = backend.Target(str(backend.ROOT / "sys_cfg" / "nuc980" / "NUC980DK71YC.ini"))
         kernel = sample / "zImage"
         self.assertEqual(int.from_bytes(kernel.read_bytes()[36:40], "little"), 0x016F2818)
         commands = [backend.attach(target), backend.download(target, image, "0xe00000"),
@@ -2039,7 +2039,7 @@ class QtTests(unittest.TestCase):
             commands.append(backend.program(target, media, backend.ImageEntry(str(image))))
         format_ini = self.root / "format.ini"
         format_ini.write_text(backend.format_configuration(target, 32, [128, 0]))
-        commands.append(backend.Command([str(format_ini)], label="Format check"))
+        commands.append(backend.Command([str(format_ini)] + target.options(), label="Format check"))
         for command in commands:
             with self.subTest(label=command.label):
                 done = QSignalSpy(self.runner.finished)
@@ -2050,7 +2050,7 @@ class QtTests(unittest.TestCase):
 
     def test_real_backend_check_for_sample_spinand_and_sd1_templates(self):
         sample = backend.ROOT / "sample"
-        target = backend.Target(str(backend.ROOT / "sys_cfg" / "NUC980DK71YC.ini"))
+        target = backend.Target(str(backend.ROOT / "sys_cfg" / "nuc980" / "NUC980DK71YC.ini"))
         cases = (("SPI NAND", "config_spinand.json", "nuwriter-pack-spinand.bin", "spinand"),
                  ("SD/eMMC", "config_sd1.json", "nuwriter-pack-sd.bin", "sd"))
         for media, filename, packed, mode in cases:
@@ -2059,7 +2059,7 @@ class QtTests(unittest.TestCase):
                 original = config.read_bytes()
                 document = json.loads(original)
                 self.assertEqual(document["mode"], mode)
-                self.assertEqual(document["ddr"], "../sys_cfg/NUC980DK71YC.ini")
+                self.assertEqual(document["ddr"], "../sys_cfg/nuc980/NUC980DK71YC.ini")
                 for image in document["image"]:
                     if "file" in image:
                         self.assertTrue((sample / image["file"]).is_file(), image["file"])
@@ -2087,6 +2087,78 @@ class QtTests(unittest.TestCase):
             document = json.loads((sample / filename).read_text(encoding="utf-8"))
             used.update(image["file"] for image in document["image"] if "file" in image)
         self.assertEqual({path.name for path in sample.iterdir() if path.is_file()}, used)
+
+    def test_nuc970_chip_switch_updates_ddr_media_aes_and_mtp_controls(self):
+        window = self.window()
+        self.assertEqual(window.current_chip(), "nuc980")
+        self.assertIn("SPI NAND", [window.media.itemText(i) for i in range(window.media.count())])
+        self.assertNotIn("MTP", [window.media.itemText(i) for i in range(window.media.count())])
+        self.assertFalse(window.flash.aes_key_row.isVisibleTo(window.flash))
+        window.chip.setCurrentText("NUC970")
+        self.assertEqual(window.current_chip(), "nuc970")
+        self.assertEqual(window.windowTitle(), "Nuvoton NuWriter - NUC970")
+        expected_ddr = sorted(path.name for path in (backend.ROOT / "sys_cfg" / "nuc970").glob("*.ini"))
+        self.assertEqual([window.ddr.itemText(i) for i in range(window.ddr.count())], expected_ddr)
+        self.assertEqual(window.ddr.currentText(), "NUC972DF62Y.ini")
+        self.assertNotIn("SPI NAND", [window.media.itemText(i) for i in range(window.media.count())])
+        self.assertIn("MTP", [window.media.itemText(i) for i in range(window.media.count())])
+        self.assertEqual([window.pack.media.itemText(i) for i in range(window.pack.media.count())],
+                         ["SPI NOR", "NAND", "SD/eMMC"])
+        self.assertEqual([window.mass.media.itemText(i) for i in range(window.mass.media.count())],
+                         ["SPI NOR", "NAND", "SD/eMMC"])
+        window.media.setCurrentText("SPI NOR")
+        self.assertTrue(window.flash.aes_key_row.isVisibleTo(window.flash))
+        window.media.setCurrentText("MTP")
+        self.assertIs(window.pages.currentWidget(), window.mtp)
+        window.mtp.option.setCurrentText("AES")
+        self.assertEqual([window.mtp.mode.itemText(i) for i in range(window.mtp.mode.count())],
+                         list(backend.MTP_AES_MODES))
+        window.mtp.option.setCurrentText("SHA")
+        self.assertEqual([window.mtp.mode.itemText(i) for i in range(window.mtp.mode.count())],
+                         list(backend.MTP_SHA_MODES))
+        window.close()
+        restored = self.window()
+        self.assertEqual(restored.current_chip(), "nuc970")
+        self.assertEqual(restored.ddr.currentText(), "NUC972DF62Y.ini")
+        self.assertEqual(restored.media.currentText(), "MTP")
+
+    def test_nuc970_real_backend_check_for_attach_aes_and_mtp(self):
+        sample = backend.ROOT / "sample"
+        image = sample / "u-boot-spinand.bin"
+        key_file = backend.ROOT / "key_cfg" / "nuc970" / "key.dat"
+        target = backend.Target(str(backend.ROOT / "sys_cfg" / "nuc970" / "NUC972DF62Y.ini"), chip="nuc970")
+        commands = [
+            backend.attach(target),
+            backend.program(target, "SPI NOR", backend.ImageEntry(str(image), "Data", "0x100000", "0x200", str(key_file)), verify=True),
+            backend.program(target, "NAND", backend.ImageEntry(str(image), "Loader", "0x0", "0xe00000", str(key_file)), verify=True),
+            backend.mtp_program(target, str(key_file), "AES", "SPI NOR", encrypt_enabled=True, lock=False),
+            backend.mtp_program(target, str(image), "SHA", "USB with SHA", encrypt_enabled=False, lock=True),
+        ]
+        for command in commands:
+            with self.subTest(label=command.label, args=command.arguments):
+                done = QSignalSpy(self.runner.finished)
+                check_command = backend.Command(command.arguments + ["--check"], cwd=command.cwd, label=command.label)
+                self.runner.start(check_command, preflight=False)
+                self.wait_finished(done)
+                self.assertTrue(done.at(0)[0], done.at(0)[1])
+        with self.assertRaises(ValueError):
+            backend.program(target, "SPI NAND", backend.ImageEntry(str(image)))
+        with self.assertRaises(ValueError):
+            backend.mtp_program(backend.Target(str(backend.ROOT / "sys_cfg" / "nuc980" / "NUC980DK71YC.ini"), chip="nuc980"),
+                                str(key_file), "AES", "SPI NOR")
+
+    def test_nuc970_mtp_lock_shows_irreversible_warning(self):
+        window = self.window()
+        window.chip.setCurrentText("NUC970")
+        window.media.setCurrentText("MTP")
+        window.mtp.lock_mtp.setChecked(True)
+        with patch.object(window, "submit") as submit:
+            window.mtp.burn()
+        submit.assert_called_once()
+        self.assertIn("LOCK MTP IS SELECTED", submit.call_args.kwargs["warning"])
+        self.assertIn("--mtp-lock", submit.call_args.args[0].arguments)
+        self.assertIn("--chip", submit.call_args.args[0].arguments)
+        self.assertIn("nuc970", submit.call_args.args[0].arguments)
 
 
 if __name__ == "__main__":

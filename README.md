@@ -1,8 +1,8 @@
-# NUC980 PyNuWriter
+# NUC980 / NUC970 PyNuWriter
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
 
-USB programming and RAM download tool for NUC980. For graphical operation, see the [GUI guide](gui/README.md).
+USB programming and RAM download tool for NUC980 and NUC970 / N9H30 (including NUC970 MTP/OTP key programming and AES encryption). For graphical operation, see the [GUI guide](gui/README.md).
 
 ## Standalone Downloads
 
@@ -116,14 +116,19 @@ python gui/app.py
 ## Connect
 
 Put the board in USB Boot mode and connect its USB Device port to the PC.
-The examples use NUC980DK71YC; select the DDR setting in `sys_cfg` that matches your board.
+**Every attach, write, read, erase, or pack command requires an explicit `--chip nuc980` or `--chip nuc970` flag** (no auto-detection).
+NUC980 DDR settings live in `sys_cfg/nuc980/` (example: `NUC980DK71YC.ini`); NUC970 / N9H30 DDR settings live in `sys_cfg/nuc970/` (example: `NUC972DF62Y.ini`).
 
 ```bash
 python nuwriter.py --list
 ```
 
 ```bash
-python nuwriter.py -a NUC980DK71YC.ini
+python nuwriter.py --chip nuc980 -a NUC980DK71YC.ini
+```
+
+```bash
+python nuwriter.py --chip nuc970 -a NUC972DF62Y.ini
 ```
 
 Repeat initialization after resetting or power-cycling. **Initialization may reset the board through a CH341 adapter.** Without that adapter, reset manually into USB Boot mode.
@@ -134,33 +139,33 @@ Before a download, write, erase or pack operation, append `--check` to validate 
 
 Examples use the [sample files](sample/README.md). Confirm offsets and flash settings for your board.
 Standalone packages omit samples; copy `sample` from the source ZIP beside the CLI executable.
-Program main U-Boot and verify:
+Program main U-Boot and verify (NUC980 SPI NAND example):
 
 ```bash
-python nuwriter.py -w spinand 0x100000 sample/u-boot-spinand.bin -o verify
+python nuwriter.py --chip nuc980 -w spinand 0x100000 sample/u-boot-spinand.bin -o verify
 ```
 
 Read a range or the whole device. Existing output files are overwritten:
 
 ```bash
-python nuwriter.py -r spinand 0x100000 0x20000 readback.bin
+python nuwriter.py --chip nuc980 -r spinand 0x100000 0x20000 readback.bin
 ```
 
 ```bash
-python nuwriter.py -r spinand all backup.bin
+python nuwriter.py --chip nuc980 -r spinand all backup.bin
 ```
 
 **Erase All deletes boot loaders, settings and filesystems. Back up first.** NAND/SPI NAND preserves marked bad blocks.
 
 ```bash
-python nuwriter.py -e spinand all
+python nuwriter.py --chip nuc980 -e spinand all
 ```
 
-Replace `spinand` with the required media. Addresses and lengths are bytes; use `0x` for hexadecimal.
+Replace media and `--chip` as needed. NUC980 supports `ddr`, `nand`, `spinand`, `spinor`, `sd`/`emmc`; NUC970 supports `ddr`, `nand`, `spinor`, `sd`/`emmc`, and `mtp` (`spinand` is NUC980-only). Addresses and lengths are bytes; use `0x` for hexadecimal.
 
 | Media | Write start | Read start | Erase unit |
 | --- | --- | --- | --- |
-| `nand`, `spinand` | Flash block | Flash block | Flash block |
+| `nand`, `spinand` (NUC980 only) | Flash block | Flash block | Flash block |
 | `spinor` | 4 KiB | 64 KiB | 64 KiB |
 | `sd`, `emmc` | 512 bytes | 512 bytes | Not supported |
 
@@ -168,18 +173,32 @@ SPI NOR whole-device reads need `--flash-size` with the capacity in bytes.
 Reads and verification do not cover OOB or every physical bad block.
 Before replacing a UBI image, erase the old rootfs region, including any tail beyond the new image.
 
+### NUC970 AES Encryption And MTP / OTP
+
+`--chip nuc970` additionally supports AES image encryption (`--aes-key key.dat`) and MTP/OTP key programming (`-w mtp`):
+
+```bash
+python nuwriter.py --chip nuc970 -w spinor 0x0 loader.bin -t loader --exec-addr 0x200 --ddr NUC972DF62Y.ini --aes-key key_cfg/nuc970/key.dat -o verify
+```
+
+```bash
+python nuwriter.py --chip nuc970 -w mtp key_cfg/nuc970/key.dat --mtp-option aes --mtp-mode spinor
+```
+
+**Warning: adding `--mtp-lock` permanently locks the chip MTP key and cannot be undone.**
+
 ## Download To RAM
 
 Download and start main U-Boot; omit `-o execute` to download only:
 
 ```bash
-python nuwriter.py -w ddr 0x00e00000 sample/u-boot-spinand.bin -o execute
+python nuwriter.py --chip nuc980 -w ddr 0x00e00000 sample/u-boot-spinand.bin -o execute
 ```
 
 Linux example using a rootfs already installed on SPI NAND:
 
 ```bash
-python nuwriter.py -w ddr 0x8000 sample/zImage -o execute --dtb sample/nuc980-iot-128m-bmc.dtb --dtb-addr 0x1400000 --bootargs "noinitrd ubi.mtd=3 root=ubi0:rootfs rootfstype=ubifs rw console=ttyS0,115200n8 init=/sbin/init mem=128M"
+python nuwriter.py --chip nuc980 -w ddr 0x8000 sample/zImage -o execute --dtb sample/nuc980-iot-128m-bmc.dtb --dtb-addr 0x1400000 --bootargs "noinitrd ubi.mtd=3 root=ubi0:rootfs rootfstype=ubifs rw console=ttyS0,115200n8 init=/sbin/init mem=128M"
 ```
 
 Use matching kernel, DTB and rootfs files. For this command, use raw `zImage`, not U-Boot-wrapped `uImage`.
@@ -195,11 +214,11 @@ cd sample
 ```
 
 ```bash
-python ../nuwriter.py -p config_spinand.json --check
+python ../nuwriter.py --chip nuc980 -p config_spinand.json --check
 ```
 
 ```bash
-python ../nuwriter.py -p config_spinand.json
+python ../nuwriter.py --chip nuc980 -p config_spinand.json
 ```
 
 Use `config_sd1.json` instead for SD1. Its CLI media name is `sd`.
@@ -212,27 +231,28 @@ cd ..
 After initialization, program and verify the pack:
 
 ```bash
-python nuwriter.py -w spinand sample/nuwriter-pack-spinand.bin --ddr NUC980DK71YC.ini -o verify
+python nuwriter.py --chip nuc980 -w spinand sample/nuwriter-pack-spinand.bin --ddr NUC980DK71YC.ini -o verify
 ```
 
 ```bash
-python nuwriter.py -w sd sample/nuwriter-pack-sd.bin --ddr NUC980DK71YC.ini -o verify
+python nuwriter.py --chip nuc980 -w sd sample/nuwriter-pack-sd.bin --ddr NUC980DK71YC.ini -o verify
 ```
 
 Single-board Pack programming does not automatically erase the whole device.
 Loader must be first at `0x0` for flash or `0x400` for SD/eMMC; SPI NOR Pack Verify needs 64 KiB-aligned image offsets.
-Pack verification excludes loader headers/DDR data, SD partition setup, OOB and unused areas.
+NUC970 packs use a 16-byte boot header and support `aes_key` on data/loader images as well as `type: "mtp"` items.
+Pack verification excludes loader headers/DDR data, SD partition setup, MTP entries, OOB and unused areas.
 
 ## Mass Production
 
 Put every board in USB Boot mode, connect them, then initialize and program:
 
 ```bash
-python nuwriter.py -m -a NUC980DK71YC.ini
+python nuwriter.py --chip nuc980 -m -a NUC980DK71YC.ini
 ```
 
 ```bash
-python nuwriter.py -m -w spinand sample/nuwriter-pack-spinand.bin --ddr NUC980DK71YC.ini -o verify
+python nuwriter.py --chip nuc980 -m -w spinand sample/nuwriter-pack-spinand.bin --ddr NUC980DK71YC.ini -o verify
 ```
 
 **This erases all good blocks before programming NAND/SPI NAND.** SPI NOR and SD/eMMC skip the separate whole-device erase.

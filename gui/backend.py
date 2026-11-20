@@ -11,9 +11,20 @@ from typing import Optional
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 BACKEND = ROOT / "nuwriter.py"
+CHIPS = {"NUC980": "nuc980", "NUC970": "nuc970"}
+CHIP_MEDIA = {
+    "nuc980": ["SDRAM", "SPI NOR", "NAND", "SD/eMMC", "SPI NAND", "Pack", "Mass Production"],
+    "nuc970": ["SDRAM", "SPI NOR", "NAND", "SD/eMMC", "MTP", "Pack", "Mass Production"],
+}
+CHIP_PACK_MEDIA = {
+    "nuc980": ["SPI NAND", "SPI NOR", "NAND", "SD/eMMC"],
+    "nuc970": ["SPI NOR", "NAND", "SD/eMMC"],
+}
 MEDIA = {"SDRAM": "ddr", "NAND": "nand", "SPI NOR": "spinor",
-         "SPI NAND": "spinand", "SD/eMMC": "sd"}
+         "SPI NAND": "spinand", "SD/eMMC": "sd", "MTP": "mtp"}
 KINDS = {"Data": "data", "Environment": "env", "Loader": "loader", "Pack": "pack"}
+MTP_AES_MODES = {"USB": "usb", "eMMC / SD": "emmc", "NAND": "nand", "SPI NOR": "spinor"}
+MTP_SHA_MODES = {"USB without SHA": "usb_no_sha", "USB with SHA": "usb_sha"}
 
 
 def number(text):
@@ -45,6 +56,7 @@ class ImageEntry:
     kind: str = "Data"
     offset: str = "0x0"
     execute: str = "0x200"
+    aes_key: str = ""
 
 
 @dataclass
@@ -55,9 +67,17 @@ class Target:
     timeout: int = 10000
     operation_timeout: int = 300000
     massproduct: bool = False
+    chip: str = "nuc980"
+
+    def normalized_chip(self):
+        chip = str(self.chip).strip().lower()
+        if chip not in {"nuc970", "nuc980"}:
+            raise ValueError(f"Unsupported chip: {self.chip}")
+        return chip
 
     def options(self):
-        arguments = ["--timeout", str(self.timeout), "--operation-timeout", str(self.operation_timeout)]
+        arguments = ["--chip", self.normalized_chip(), "--timeout", str(self.timeout),
+                     "--operation-timeout", str(self.operation_timeout)]
         if self.device:
             arguments += ["--device", self.device]
         if self.trace:
@@ -94,11 +114,22 @@ def attach(target):
     return Command(["-a", "--ddr", target.ddr_file()] + target.options(), label="Re-Connect")
 
 
+def _validate_flash_media(target, media):
+    chip = target.normalized_chip()
+    if media not in CHIP_PACK_MEDIA[chip]:
+        raise ValueError(f"{media} is not supported for {chip.upper()}.")
+
+
 def program(target, media, image, verify=False):
     filename = str(input_file(image.filename))
-    if media not in MEDIA or media == "SDRAM" or image.kind not in KINDS:
+    if media not in MEDIA or media in {"SDRAM", "MTP"} or image.kind not in KINDS:
         raise ValueError("Select flash media and an image type.")
+    _validate_flash_media(target, media)
+    chip = target.normalized_chip()
+    aes_key = image.aes_key.strip() if isinstance(image.aes_key, str) else ""
     if image.kind == "Pack":
+        if aes_key:
+            raise ValueError("AES encryption key cannot be applied when writing a Pack file.")
         arguments = ["-w", MEDIA[media], filename, "--ddr", target.ddr_file()]
         if verify:
             arguments += ["-o", "verify"]
@@ -111,9 +142,33 @@ def program(target, media, image, verify=False):
             if offset != (0x400 if media == "SD/eMMC" else 0):
                 raise ValueError("Loader offset must be 0 for flash or 0x400 for SD/eMMC.")
             arguments += ["--ddr", target.ddr_file()]
+        if aes_key:
+            if chip != "nuc970":
+                raise ValueError("AES image encryption is supported only for NUC970.")
+            if image.kind not in {"Data", "Loader"}:
+                raise ValueError("AES image encryption supports only Data and Loader images.")
+            arguments += ["--aes-key", str(input_file(aes_key))]
         if verify:
             arguments += ["-o", "verify"]
     return Command(arguments + target.options(), label=f"{media} program")
+
+
+def mtp_program(target, source_file, option, mode, encrypt_enabled=True, lock=False):
+    if target.normalized_chip() != "nuc970":
+        raise ValueError("MTP programming is supported only for NUC970.")
+    if target.massproduct:
+        raise ValueError("MTP programming requires a single target.")
+    option_key = str(option).strip().lower()
+    if option_key not in {"aes", "sha"}:
+        raise ValueError("MTP option must be AES or SHA.")
+    mode_value = (MTP_AES_MODES if option_key == "aes" else MTP_SHA_MODES).get(mode, str(mode).strip().lower())
+    arguments = ["-w", "mtp", str(input_file(source_file)),
+                 "--mtp-option", option_key, "--mtp-mode", mode_value]
+    if not encrypt_enabled:
+        arguments.append("--mtp-disable-encrypt")
+    if lock:
+        arguments.append("--mtp-lock")
+    return Command(arguments + target.options(), label="MTP program")
 
 
 def download(target, filename, address, execute=False, dtb="", dtb_address="0x1400000", bootargs=None):
@@ -132,8 +187,9 @@ def download(target, filename, address, execute=False, dtb="", dtb_address="0x14
 def read(target, media, filename, start="0x0", length="0x20000", all_flash=False, flash_size=""):
     if target.massproduct:
         raise ValueError("Read operations require a single target.")
-    if media not in MEDIA or media == "SDRAM":
-        raise ValueError("Reading SDRAM is not supported.")
+    if media not in MEDIA or media in {"SDRAM", "MTP"}:
+        raise ValueError(f"Reading {media} is not supported.")
+    _validate_flash_media(target, media)
     destination = output_file(filename)
     arguments = ["-r", MEDIA[media]]
     if all_flash:
@@ -152,8 +208,9 @@ def read(target, media, filename, start="0x0", length="0x20000", all_flash=False
 
 
 def erase(target, media, start="0x0", length="0x20000", all_flash=True):
-    if media not in MEDIA or media in {"SDRAM", "SD/eMMC"}:
+    if media not in MEDIA or media in {"SDRAM", "SD/eMMC", "MTP"}:
         raise ValueError("Erase is supported only for NAND, SPI NAND and SPI NOR.")
+    _validate_flash_media(target, media)
     arguments = ["-e", MEDIA[media]]
     if all_flash:
         arguments.append("all")
@@ -171,7 +228,7 @@ def format_configuration(target, reserved, sizes):
     if any(number(value) == 0 for value in sizes[:-1]):
         raise ValueError("Fixed partition sizes must be greater than zero.")
     config = configparser.ConfigParser()
-    config.read_dict({"RUN": {"mode": "SD", "pack": "no", "all_device": "no"},
+    config.read_dict({"RUN": {"chip": target.normalized_chip(), "mode": "SD", "pack": "no", "all_device": "no"},
                       "DDR": {"ddr": target.ddr_file()},
                       "SD": {"run": "format", "using_format": "yes", "reserved_size": str(number(reserved)),
                              "partition_num": str(len(sizes))}})
@@ -182,33 +239,45 @@ def format_configuration(target, reserved, sizes):
     return output.getvalue()
 
 
-def pack(config, output, media):
-    if media not in MEDIA or media == "SDRAM":
+def pack(config, output, media, chip="nuc980"):
+    normalized_chip = str(chip).strip().lower()
+    if normalized_chip not in {"nuc970", "nuc980"}:
+        raise ValueError(f"Unsupported chip: {chip}")
+    if media not in CHIP_PACK_MEDIA[normalized_chip]:
         raise ValueError("Select pack media.")
     source = input_file(config)
-    return Command(["-p", str(source), "--media", MEDIA[media], "--output", str(output_file(output))],
+    return Command(["--chip", normalized_chip, "-p", str(source), "--media", MEDIA[media], "--output", str(output_file(output))],
                    cwd=source.parent, label="Pack output")
 
 
-def pack_document(document, media):
+def pack_document(document, media, chip=None):
     result = dict(document)
     result.pop("media", None)
     result["mode"] = MEDIA[media]
+    if chip is not None and "chip" in result:
+        result["chip"] = str(chip).strip().lower()
     return result
 
 
 def protect_pack_inputs(document, directory, output, config=None):
     protected = {Path(config).resolve()} if config else set()
     for image in document.get("image", []):
-        for key in ("file", "ddr_ini", "ddr"):
+        for key in ("file", "key_file", "ddr_ini", "ddr", "aes_key"):
             if image.get(key):
                 path = Path(image[key])
                 protected.add((directory / path).resolve())
-                if key != "file":
+                if key in {"ddr_ini", "ddr"}:
                     protected.add((ROOT / "sys_cfg" / path).resolve())
+                    protected.add((ROOT / "sys_cfg" / "nuc980" / path).resolve())
+                    protected.add((ROOT / "sys_cfg" / "nuc970" / path).resolve())
+                elif key in {"aes_key", "key_file"} or image.get("type") == "mtp":
+                    protected.add((ROOT / "key_cfg" / path).resolve())
+                    protected.add((ROOT / "key_cfg" / "nuc970" / path).resolve())
     if document.get("ddr"):
         protected.add((directory / document["ddr"]).resolve())
         protected.add((ROOT / "sys_cfg" / document["ddr"]).resolve())
+        protected.add((ROOT / "sys_cfg" / "nuc980" / document["ddr"]).resolve())
+        protected.add((ROOT / "sys_cfg" / "nuc970" / document["ddr"]).resolve())
     if Path(output).resolve() in protected:
         raise ValueError("Output cannot overwrite the configuration or its image/DDR inputs.")
 
@@ -216,6 +285,8 @@ def protect_pack_inputs(document, directory, output, config=None):
 def verification_read(target, media, image, destination):
     if image.kind != "Data":
         raise ValueError("Standalone Verify supports Data images. Use Program + Verify for Loader/Environment.")
+    if isinstance(image.aes_key, str) and image.aes_key.strip():
+        raise ValueError("Standalone Verify compares plaintext files. Use Program + Verify for AES-encrypted images.")
     source = input_file(image.filename)
     return read(target, media, destination, image.offset, hex(source.stat().st_size))
 
