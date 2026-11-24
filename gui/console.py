@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QKeySequence, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QMenu, QMessageBox,
-    QPlainTextEdit, QPushButton, QStyle, QToolButton, QVBoxLayout,
+    QPlainTextEdit, QPushButton, QSizePolicy, QStyle, QToolButton, QVBoxLayout,
 )
 
 
@@ -283,6 +283,8 @@ class ConsoleWindow(QDialog):
         settings.addWidget(QLabel("Console:"))
         self.ports = QComboBox()
         self.ports.setMinimumContentsLength(22)
+        self.ports.setMinimumWidth(120)
+        self.ports.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.ports.setToolTip("Debug UART/VCOM port, not the CH341 reset-adapter port.")
         settings.addWidget(self.ports, 1)
         settings.addWidget(QLabel("Baud:"))

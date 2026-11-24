@@ -216,16 +216,17 @@ def copy_licenses(directory, packages):
     collect_sources(directory, packages)
     copy_application_source(directory, packages)
     (directory / "README.txt").write_text(
-        "NUC980 / NUC970 PyNuWriter standalone export\n\n"
+        "NUC980 / NUC970 / NUC990 PyNuWriter standalone export\n\n"
         "Extract the entire archive and keep all files together. Python is bundled.\n"
-        "CLI: nuwriter --help (Windows: nuwriter.exe --help). Specify --chip nuc980 or --chip nuc970.\n"
+        "CLI: nuwriter --help (Windows: nuwriter.exe --help). Specify --chip nuc980, nuc970, or nuc990.\n"
         "GUI: open nuwriter-gui.exe, nuwriter-gui, or nuwriter-gui.app.\n"
         "Windows: configure a libusb-compatible device driver, such as WinUSB, for programming USB 0416:5963.\n"
         "WinUSB4NuVCOM.exe is for the board's USB-to-UART/VCOM interface, not programming USB.\n"
         "Bundled support files: CLI _internal/driver (GUI: backend/nuwriter/_internal/driver).\n"
         "Linux/macOS: install native libusb-1.0; Linux also needs Qt system libraries and USB permissions.\n"
         "Builds are not developer-signed or notarized. See the repository README for platform setup.\n"
-        "NUC980/NUC970 DDR, XUSB, and sample key_cfg resources are included; large sample images are not.\n"
+        "NUC980/NUC970/NUC990 DDR and XUSB, and NUC970 sample key_cfg resources are included; large sample images are not.\n"
+        "NUC990 currently uses the NUC980 protocol; confirm DDR settings and firmware before hardware operations.\n"
         "Initialization can reset the board through the optional CH341 adapter.\n"
         "Project code: LICENSE. Third-party components: licenses/ and driver license/source files.\n"
         "This application uses Qt / PySide6 and pyte under LGPLv3 when the GUI is included.\n"
@@ -341,6 +342,7 @@ def smoke(directory, gui=False):
                           ["--reset-ch341", "--help"],
                           ["--chip", "nuc980", "-a", "NUC980DK71YC.ini", "--check"],
                           ["--chip", "nuc970", "-a", "NUC972DF62Y.ini", "--check"],
+                          ["--chip", "nuc990", "-a", "COMING_SOON.ini", "--check"],
                           ["--chip", "nuc970", "-w", "mtp", str(ROOT / "key_cfg" / "nuc970" / "key.dat"),
                            "--mtp-option", "aes", "--mtp-mode", "spinor", "--check"],
                           ["--chip", "nuc980", "-w", "ddr", "0x8000", str(ROOT / "sample" / "zImage"), "-o", "execute",

@@ -486,7 +486,7 @@ class ExportTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue((export.LICENSE_INPUTS / name).is_file())
 
-    def test_nuc970_and_nuc980_resources_are_packaged_for_export(self):
+    def test_nuc970_nuc980_and_nuc990_resources_are_packaged_for_export(self):
         with patch.object(sys, "platform", "win32"), patch.object(export.subprocess, "run") as run:
             export.freeze(export.ROOT / "dist", "nuwriter", "nuwriter.py", gui=False)
         command = run.call_args.args[0]
@@ -502,6 +502,9 @@ class ExportTests(unittest.TestCase):
             self.assertTrue((source / "xusb" / "nuc980" / "xusb128.bin").is_file())
             self.assertTrue((source / "sys_cfg" / "nuc970" / "NUC972DF62Y.ini").is_file())
             self.assertTrue((source / "xusb" / "nuc970" / "xusb32.bin").is_file())
+            self.assertTrue((source / "sys_cfg" / "nuc990" / "COMING_SOON.ini").is_file())
+            for name in ("xusb16.bin", "xusb.bin", "xusb64.bin", "xusb128.bin"):
+                self.assertTrue((source / "xusb" / "nuc990" / name).is_file())
 
 
 if __name__ == "__main__":

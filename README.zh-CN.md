@@ -1,8 +1,8 @@
-# NUC980 / NUC970 PyNuWriter
+# NUC980 / NUC970 / NUC990 PyNuWriter
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
 
-NUC980 与 NUC970 / N9H30 USB 烧录与 RAM 下载工具（NUC970 另支持 MTP/OTP 密钥烧录与 AES 加密）。图形界面操作请参阅 [GUI 手册](gui/README.zh-CN.md)。
+NUC980、NUC970 / N9H30 与 NUC990 USB 烧录与 RAM 下载工具（NUC970 另支持 MTP/OTP 密钥烧录与 AES 加密）。NUC990 目前沿用 NUC980 协议。图形界面操作请参阅 [GUI 手册](gui/README.zh-CN.md)。
 
 ## 下载独立执行版本
 
@@ -116,8 +116,9 @@ python gui/app.py
 ## 连接开发板
 
 将开发板设为 USB Boot 模式，连接其 USB Device 接口与电脑。
-**所有烧录、读取、擦除、初始化与打包命令均须明确指定 `--chip nuc980` 或 `--chip nuc970`**（不自动检测）。
+**所有烧录、读取、擦除、初始化与打包命令均须明确指定 `--chip nuc980`、`--chip nuc970` 或 `--chip nuc990`**（不自动检测）。
 NUC980 DDR 配置位于 `sys_cfg/nuc980/`（示例：`NUC980DK71YC.ini`），NUC970 / N9H30 DDR 配置位于 `sys_cfg/nuc970/`（示例：`NUC972DF62Y.ini`）。
+NUC990 使用 `sys_cfg/nuc990/` 与 `xusb/nuc990/`，目前 DDR 配置为 `COMING_SOON.ini`；实机操作前须确认配置与固件适用于您的开发板。
 
 ```bash
 python nuwriter.py --list
@@ -129,6 +130,12 @@ python nuwriter.py --chip nuc980 -a NUC980DK71YC.ini
 
 ```bash
 python nuwriter.py --chip nuc970 -a NUC972DF62Y.ini
+```
+
+不连接开发板，先验证 NUC990 初始化配置：
+
+```bash
+python nuwriter.py --chip nuc990 -a COMING_SOON.ini --check
 ```
 
 开发板复位或重新上电后须再次初始化。**初始化可能通过 CH341 复位开发板。** 未使用该适配器时，请手动复位到 USB Boot 模式。
@@ -161,11 +168,11 @@ python nuwriter.py --chip nuc980 -r spinand all backup.bin
 python nuwriter.py --chip nuc980 -e spinand all
 ```
 
-按需替换媒体与 `--chip`。NUC980 支持 `ddr`、`nand`、`spinand`、`spinor`、`sd`/`emmc`；NUC970 支持 `ddr`、`nand`、`spinor`、`sd`/`emmc`、`mtp`（不支持 `spinand`）。地址与长度单位为 byte，十六进制数值须加 `0x`。
+按需替换媒体与 `--chip`。NUC980 与 NUC990 支持 `ddr`、`nand`、`spinand`、`spinor`、`sd`/`emmc`；NUC970 支持 `ddr`、`nand`、`spinor`、`sd`/`emmc`、`mtp`（不支持 `spinand`）。地址与长度单位为 byte，十六进制数值须加 `0x`。
 
 | 媒体 | 写入起点对齐 | 读取起点对齐 | 擦除单位 |
 | --- | --- | --- | --- |
-| `nand`, `spinand` (仅 NUC980) | Flash 块 | Flash 块 | Flash 块 |
+| `nand`, `spinand`（SPI NAND：NUC980/NUC990） | Flash 块 | Flash 块 | Flash 块 |
 | `spinor` | 4 KiB | 64 KiB | 64 KiB |
 | `sd`, `emmc` | 512 bytes | 512 bytes | 不支持 |
 

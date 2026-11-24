@@ -42,6 +42,12 @@ def smoke_gui(application, window_class, report):
         nuc970_ddr_count = window.ddr.count()
         if nuc970_ddr_count == 0 or "MTP" not in [window.media.itemText(i) for i in range(window.media.count())]:
             raise RuntimeError("Bundled NUC970 DDR settings or MTP media option are missing")
+        window.chip.setCurrentText("NUC990")
+        application.processEvents()
+        nuc990_ddr_count = window.ddr.count()
+        if (window.current_chip() != "nuc990" or nuc990_ddr_count == 0
+                or "SPI NAND" not in [window.media.itemText(i) for i in range(window.media.count())]):
+            raise RuntimeError("Bundled NUC990 series, DDR settings or SPI NAND media option are missing")
         window.chip.setCurrentText("NUC980")
         application.processEvents()
         pyte_source = Path(console.pyte.__file__)
@@ -54,6 +60,7 @@ def smoke_gui(application, window_class, report):
             Path(report).write_text(json.dumps({"status": "passed" if success else "failed", "message": message,
                                                "ddr_settings": window.ddr.count(),
                                                "nuc970_ddr_settings": nuc970_ddr_count,
+                                               "nuc990_ddr_settings": nuc990_ddr_count,
                                                "pyte_source": str(pyte_source),
                                                "gio_module_dir": os.environ.get("GIO_MODULE_DIR"),
                                                "backend": window.runner.current.invocation()}),

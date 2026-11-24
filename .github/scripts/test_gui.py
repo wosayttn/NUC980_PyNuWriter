@@ -16,6 +16,28 @@ backend = import_module("backend")
 
 
 class CommandTests(unittest.TestCase):
+    def test_nuc990_commands_keep_series_identity_and_nuc980_media(self):
+        target = backend.Target(str(self.ddr), chip="NUC990")
+        commands = [backend.attach(target), backend.download(target, self.image, "0x8000", False),
+                    backend.read(target, "SPI NAND", self.root / "read.bin"), backend.erase(target, "SPI NAND")]
+        for media in backend.CHIP_PACK_MEDIA["nuc980"]:
+            commands.append(backend.program(target, media, backend.ImageEntry(str(self.image)), verify=True))
+        config = self.root / "pack.json"
+        config.write_text('{"chip": "nuc990", "image": []}', encoding="ascii")
+        commands.append(backend.pack(config, self.root / "pack.bin", "SPI NAND", chip="nuc990"))
+        for command in commands:
+            with self.subTest(command=command.arguments):
+                self.assertEqual(command.arguments[command.arguments.index("--chip") + 1], "nuc990")
+        self.assertEqual(backend.CHIP_MEDIA["nuc990"], backend.CHIP_MEDIA["nuc980"])
+        self.assertEqual(backend.CHIP_PACK_MEDIA["nuc990"], backend.CHIP_PACK_MEDIA["nuc980"])
+        with self.assertRaises(ValueError):
+            backend.mtp_program(target, str(self.image), "AES", "SPI NOR")
+        with self.assertRaises(ValueError):
+            backend.program(target, "SPI NOR", backend.ImageEntry(str(self.image), aes_key=str(self.image)))
+        with self.assertRaises(ValueError):
+            backend.protect_pack_inputs({"ddr": "COMING_SOON.ini", "image": []}, self.root,
+                                       backend.ROOT / "sys_cfg" / "nuc990" / "COMING_SOON.ini")
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="nuwriter gui ! ")
         self.root = Path(self.directory.name).resolve()
@@ -1183,7 +1205,7 @@ class QtTests(unittest.TestCase):
             self.assertTrue(window.console_window.ports.isEnabled())
             port.close.assert_called_once()
 
-    def test_console_first_show_uses_right_side_then_stays_independent_of_main(self):
+    def test_console_uses_free_side_and_moves_only_to_avoid_main(self):
         screen = unittest.mock.Mock()
         screen.availableGeometry.return_value = QRect(0, 0, 3200, 1800)
         for position in (1100, 2400):
@@ -1202,14 +1224,67 @@ class QtTests(unittest.TestCase):
                     if position == 1100:
                         self.assertEqual(popup.frameGeometry().left(), window.frameGeometry().right() + 1)
                     else:
-                        self.assertEqual(popup.frameGeometry().right(), screen.availableGeometry().right())
+                        self.assertEqual(popup.frameGeometry().right(), window.frameGeometry().left() - 1)
+                    self.assertFalse(popup.frameGeometry().intersects(window.frameGeometry()))
                     frame, size = popup.frameGeometry(), popup.size()
+                    window.move(100, 70)
                     window.resize(920, 600)
-                    window.move(1200, 70)
                     self.application.processEvents()
                     self.assertEqual(popup.frameGeometry(), frame)
                     self.assertEqual(popup.size(), size)
+                    window.move(frame.topLeft())
+                    self.application.processEvents()
+                    self.assertFalse(popup.frameGeometry().intersects(window.frameGeometry()))
+                    self.assertEqual(popup.size(), size)
                     self.assertFalse(popup.connection.connected)
+
+    def test_popups_do_not_cover_main_near_screen_edges(self):
+        for available, position in ((QRect(0, 0, 3200, 1800), (2380, 1200)),
+                                    (QRect(0, 0, 1366, 768), (0, 0))):
+            for name in ("console", "trace", "log"):
+                with self.subTest(available=available, popup=name):
+                    window = self.window()
+                    window.show()
+                    self.application.processEvents()
+                    screen = unittest.mock.Mock()
+                    screen.availableGeometry.return_value = available
+                    with patch.object(console, "available_ports", return_value=[]), \
+                         patch.object(window, "screen", return_value=screen):
+                        window.move(*position)
+                        getattr(window, name + "_button").click()
+                        self.application.processEvents()
+                        popup = getattr(window, name + "_window")
+                        self.assertFalse(popup.frameGeometry().intersects(window.frameGeometry()))
+                        self.assertTrue(available.contains(popup.frameGeometry()))
+                    window.close()
+
+    def test_console_popup_fits_small_screen_with_larger_font(self):
+        window = self.window()
+        window.show()
+        self.application.processEvents()
+        screen = unittest.mock.Mock()
+        available = QRect(0, 0, 1366, 768)
+        screen.availableGeometry.return_value = available
+        with patch.object(console, "available_ports", return_value=[]), \
+             patch.object(window, "screen", return_value=screen):
+            window.move(0, 0)
+            window.console_button.click()
+            popup = window.console_window
+            popup.setStyleSheet("QWidget { font-size: 14pt; }")
+            popup.layout().invalidate()
+            popup.layout().activate()
+            popup.resize(window.size())
+            self.application.processEvents()
+            window.align_console_window()
+            self.application.processEvents()
+            self.assertFalse(popup.frameGeometry().intersects(window.frameGeometry()))
+            self.assertTrue(available.contains(popup.frameGeometry()),
+                            f"popup={popup.frameGeometry()}, minimum={popup.minimumSizeHint()}")
+            self.assertGreaterEqual(popup.ports.width(), 120)
+            settings = popup.layout().itemAt(0).layout()
+            for index in range(settings.count()):
+                self.assertTrue(popup.rect().contains(settings.itemAt(index).widget().geometry()))
+            self.assertFalse(popup.connection.connected)
 
     def test_console_geometry_survives_hide_close_and_next_app_start(self):
         with patch.object(console, "available_ports", return_value=[]), \
@@ -1221,15 +1296,18 @@ class QtTests(unittest.TestCase):
             self.application.processEvents()
             popup = window.console_window
             popup.resize(620, 360)
-            popup.move(90, 70)
+            popup.move(window.frameGeometry().right() + 51, 70)
+            popup.restoreGeometry(popup.saveGeometry())
+            if popup.frameGeometry().intersects(window.frameGeometry()):
+                window.align_console_window()
             self.application.processEvents()
             frame, size = popup.frameGeometry(), popup.size()
             window.console_button.click()
-            window.move(20, 20)
             window.console_button.click()
             self.application.processEvents()
             self.assertEqual(popup.frameGeometry(), frame)
             self.assertEqual(popup.size(), size)
+            self.assertFalse(popup.frameGeometry().intersects(window.frameGeometry()))
             popup.close()
             self.assertFalse(window.console_button.isChecked())
             window.console_button.click()
@@ -1246,8 +1324,32 @@ class QtTests(unittest.TestCase):
             self.application.processEvents()
             self.assertEqual(restored.console_window.frameGeometry(), frame)
             self.assertEqual(restored.console_window.size(), size)
+            self.assertFalse(restored.console_window.frameGeometry().intersects(restored.frameGeometry()))
             self.assertFalse(restored.console_window.connection.connected)
             serial.assert_not_called()
+
+    def test_console_restored_overlapping_position_is_relocated(self):
+        with patch.object(console, "available_ports", return_value=[]):
+            window = self.window()
+            window.show()
+            window.console_button.click()
+            self.application.processEvents()
+            popup = window.console_window
+            popup.move(window.frameGeometry().topLeft())
+            self.application.processEvents()
+            self.assertTrue(popup.frameGeometry().intersects(window.frameGeometry()))
+            window.console_button.click()
+            window.console_button.click()
+            self.application.processEvents()
+            self.assertFalse(popup.frameGeometry().intersects(window.frameGeometry()))
+            popup.move(window.frameGeometry().topLeft())
+            window.close()
+            restored = self.window()
+            restored.show()
+            restored.console_button.click()
+            self.application.processEvents()
+            self.assertFalse(restored.console_window.frameGeometry().intersects(restored.frameGeometry()))
+            self.assertFalse(restored.console_window.connection.connected)
 
     def test_console_geometry_invalid_data_uses_saved_size_and_default_position(self):
         settings = app.JsonSettings(self.root / "settings.json")
@@ -1290,8 +1392,9 @@ class QtTests(unittest.TestCase):
             window.trace_button.click()
             self.application.processEvents()
             self.assertTrue(screen.availableGeometry().contains(popup.frameGeometry()))
-            self.assertEqual(popup.frameGeometry().right(), screen.availableGeometry().right())
+            self.assertEqual(popup.frameGeometry().right(), window.frameGeometry().left() - 1)
             self.assertEqual(popup.frameGeometry().bottom(), screen.availableGeometry().bottom())
+            self.assertFalse(popup.frameGeometry().intersects(window.frameGeometry()))
             self.assertEqual(popup.size(), size)
             window.trace_button.click()
             popup.move(10, 10)
@@ -1616,6 +1719,11 @@ class QtTests(unittest.TestCase):
 
     def test_log_popup_aligns_below_main_window_and_matches_width(self):
         window = self.window()
+        screen = unittest.mock.Mock()
+        screen.availableGeometry.return_value = QRect(0, 0, 3200, 1800)
+        screen_patch = patch.object(window, "screen", return_value=screen)
+        screen_patch.start()
+        self.addCleanup(screen_patch.stop)
         window.move(30, 30)
         window.show()
         self.application.processEvents()
@@ -1646,6 +1754,8 @@ class QtTests(unittest.TestCase):
         popup = window.log_window
         show_popup = popup.show
         frame = app.QRect(30, 30, window.width() + 20, window.height() + 40)
+        screen = unittest.mock.Mock()
+        screen.availableGeometry.return_value = QRect(0, 0, 3200, 1800)
 
         def popup_frame():
             return app.QRect(0, 0, popup.width() + 8, popup.height() + 30)
@@ -1657,6 +1767,7 @@ class QtTests(unittest.TestCase):
             show_popup()
 
         with patch.object(window, "frameGeometry", return_value=frame), \
+               patch.object(window, "screen", return_value=screen), \
              patch.object(popup, "frameGeometry", side_effect=popup_frame), \
              patch.object(popup, "show", side_effect=check_width_before_show) as show:
             window.log_button.click()
@@ -1723,6 +1834,13 @@ class QtTests(unittest.TestCase):
         window = self.window()
         window.show()
         self.application.processEvents()
+        target_row = window.controls.layout().itemAt(0).layout()
+        labels = [target_row.itemAt(index).widget().text() for index in range(target_row.count())
+                  if isinstance(target_row.itemAt(index).widget(), QLabel)]
+        self.assertEqual(labels, ["Series:", "DDR Init:", "Choose Type:"])
+        widgets = [target_row.itemAt(index).widget() for index in range(target_row.count())
+                   if not isinstance(target_row.itemAt(index).widget(), QLabel)]
+        self.assertEqual(widgets, [window.chip, window.ddr, window.media, window.reconnect_button])
         expected = (window.media.sizeHint().width() * 5 + 3) // 4
         previous_ddr_width = None
         for width in (780, 800, 960):
@@ -1731,8 +1849,9 @@ class QtTests(unittest.TestCase):
                 self.application.processEvents()
                 self.assertEqual(window.width(), width)
                 self.assertEqual(window.media.width(), expected)
-                self.assertGreater(window.ddr.geometry().left(), window.media.geometry().right())
-                self.assertGreater(window.reconnect_button.geometry().left(), window.ddr.geometry().right())
+                self.assertGreater(window.ddr.geometry().left(), window.chip.geometry().right())
+                self.assertGreater(window.media.geometry().left(), window.ddr.geometry().right())
+                self.assertGreater(window.reconnect_button.geometry().left(), window.media.geometry().right())
                 self.assertTrue(window.controls.rect().contains(window.reconnect_button.geometry().bottomRight()))
                 if previous_ddr_width is not None:
                     self.assertEqual(window.ddr.width() - previous_ddr_width, width - previous_width)
@@ -2090,6 +2209,8 @@ class QtTests(unittest.TestCase):
 
     def test_nuc970_chip_switch_updates_ddr_media_aes_and_mtp_controls(self):
         window = self.window()
+        self.assertEqual([window.chip.itemText(index) for index in range(window.chip.count())],
+                         ["NUC970", "NUC980", "NUC990"])
         self.assertEqual(window.current_chip(), "nuc980")
         self.assertIn("SPI NAND", [window.media.itemText(i) for i in range(window.media.count())])
         self.assertNotIn("MTP", [window.media.itemText(i) for i in range(window.media.count())])
@@ -2122,6 +2243,31 @@ class QtTests(unittest.TestCase):
         self.assertEqual(restored.ddr.currentText(), "NUC972DF62Y.ini")
         self.assertEqual(restored.media.currentText(), "MTP")
 
+    def test_nuc990_series_selection_restores_own_ddr_and_nuc980_controls(self):
+        window = self.window()
+        window.chip.setCurrentText("NUC990")
+        self.assertEqual(window.current_chip(), "nuc990")
+        self.assertEqual(window.windowTitle(), "Nuvoton NuWriter - NUC990")
+        self.assertEqual(window.ddr.currentText(), "COMING_SOON.ini")
+        self.assertEqual(window.ddr.currentData(), "sys_cfg/nuc990/COMING_SOON.ini")
+        self.assertEqual([window.media.itemText(index) for index in range(window.media.count())],
+                         backend.CHIP_MEDIA["nuc980"])
+        for panel in (window.pack, window.mass):
+            self.assertEqual([panel.media.itemText(index) for index in range(panel.media.count())],
+                             backend.CHIP_PACK_MEDIA["nuc980"])
+        window.media.setCurrentText("SPI NAND")
+        self.assertFalse(window.flash.aes_key_row.isVisibleTo(window.flash))
+        self.assertEqual(window.target().chip, "nuc990")
+        window.chip.setCurrentText("NUC980")
+        self.assertEqual(window.ddr.currentText(), "NUC980DK71YC.ini")
+        window.chip.setCurrentText("NUC990")
+        self.assertEqual(window.ddr.currentText(), "COMING_SOON.ini")
+        window.close()
+        restored = self.window()
+        self.assertEqual(restored.current_chip(), "nuc990")
+        self.assertEqual(restored.ddr.currentText(), "COMING_SOON.ini")
+        self.assertEqual(restored.media.currentText(), "SPI NAND")
+
     def test_nuc970_real_backend_check_for_attach_aes_and_mtp(self):
         sample = backend.ROOT / "sample"
         image = sample / "u-boot-spinand.bin"
@@ -2146,6 +2292,34 @@ class QtTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             backend.mtp_program(backend.Target(str(backend.ROOT / "sys_cfg" / "nuc980" / "NUC980DK71YC.ini"), chip="nuc980"),
                                 str(key_file), "AES", "SPI NOR")
+
+    def test_nuc990_real_backend_checks_nuc980_compatible_routes(self):
+        image = self.root / "image.bin"
+        image.write_bytes(b"NUC990 compatibility test")
+        target = backend.Target(str(backend.ROOT / "sys_cfg" / "nuc990" / "COMING_SOON.ini"), chip="nuc990")
+        commands = [backend.attach(target), backend.download(target, image, "0x8000", False)]
+        for media in backend.CHIP_PACK_MEDIA["nuc990"]:
+            commands.append(backend.program(target, media, backend.ImageEntry(str(image)), verify=True))
+            commands.append(backend.read(target, media, self.root / "readback.bin"))
+            if media != "SD/eMMC":
+                commands.append(backend.erase(target, media))
+            config = self.root / (backend.MEDIA[media] + ".json")
+            config.write_text(json.dumps({"chip": "nuc990", "mode": backend.MEDIA[media],
+                                          "image": [{"file": str(image), "offset": "0x0", "type": "data"}]}),
+                              encoding="utf-8")
+            commands.append(backend.pack(config, self.root / "pack.bin", media, chip="nuc990"))
+        config = self.root / "format.ini"
+        config.write_text(backend.format_configuration(target, 32, [128, 0]), encoding="utf-8")
+        commands.append(backend.Command(["--chip", "nuc990", str(config)]))
+        for command in commands:
+            with self.subTest(label=command.label, args=command.arguments):
+                done = QSignalSpy(self.runner.finished)
+                check_command = backend.Command(command.arguments + ["--check"], cwd=command.cwd, label=command.label)
+                self.runner.start(check_command, preflight=False)
+                self.wait_finished(done)
+                self.assertTrue(done.at(0)[0], done.at(0)[1])
+        self.assertFalse((self.root / "pack.bin").exists())
+        self.assertFalse((self.root / "readback.bin").exists())
 
     def test_nuc970_mtp_lock_shows_irreversible_warning(self):
         window = self.window()

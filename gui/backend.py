@@ -11,15 +11,18 @@ from typing import Optional
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 BACKEND = ROOT / "nuwriter.py"
-CHIPS = {"NUC980": "nuc980", "NUC970": "nuc970"}
+CHIPS = {"NUC980": "nuc980", "NUC970": "nuc970", "NUC990": "nuc990"}
+CHIP_DDR_DEFAULTS = {"nuc980": "NUC980DK71YC.ini", "nuc970": "NUC972DF62Y.ini", "nuc990": "COMING_SOON.ini"}
 CHIP_MEDIA = {
     "nuc980": ["SDRAM", "SPI NOR", "NAND", "SD/eMMC", "SPI NAND", "Pack", "Mass Production"],
     "nuc970": ["SDRAM", "SPI NOR", "NAND", "SD/eMMC", "MTP", "Pack", "Mass Production"],
 }
+CHIP_MEDIA["nuc990"] = list(CHIP_MEDIA["nuc980"])
 CHIP_PACK_MEDIA = {
     "nuc980": ["SPI NAND", "SPI NOR", "NAND", "SD/eMMC"],
     "nuc970": ["SPI NOR", "NAND", "SD/eMMC"],
 }
+CHIP_PACK_MEDIA["nuc990"] = list(CHIP_PACK_MEDIA["nuc980"])
 MEDIA = {"SDRAM": "ddr", "NAND": "nand", "SPI NOR": "spinor",
          "SPI NAND": "spinand", "SD/eMMC": "sd", "MTP": "mtp"}
 KINDS = {"Data": "data", "Environment": "env", "Loader": "loader", "Pack": "pack"}
@@ -71,7 +74,7 @@ class Target:
 
     def normalized_chip(self):
         chip = str(self.chip).strip().lower()
-        if chip not in {"nuc970", "nuc980"}:
+        if chip not in CHIPS.values():
             raise ValueError(f"Unsupported chip: {self.chip}")
         return chip
 
@@ -241,7 +244,7 @@ def format_configuration(target, reserved, sizes):
 
 def pack(config, output, media, chip="nuc980"):
     normalized_chip = str(chip).strip().lower()
-    if normalized_chip not in {"nuc970", "nuc980"}:
+    if normalized_chip not in CHIPS.values():
         raise ValueError(f"Unsupported chip: {chip}")
     if media not in CHIP_PACK_MEDIA[normalized_chip]:
         raise ValueError("Select pack media.")
@@ -270,6 +273,7 @@ def protect_pack_inputs(document, directory, output, config=None):
                     protected.add((ROOT / "sys_cfg" / path).resolve())
                     protected.add((ROOT / "sys_cfg" / "nuc980" / path).resolve())
                     protected.add((ROOT / "sys_cfg" / "nuc970" / path).resolve())
+                    protected.add((ROOT / "sys_cfg" / "nuc990" / path).resolve())
                 elif key in {"aes_key", "key_file"} or image.get("type") == "mtp":
                     protected.add((ROOT / "key_cfg" / path).resolve())
                     protected.add((ROOT / "key_cfg" / "nuc970" / path).resolve())
@@ -278,6 +282,7 @@ def protect_pack_inputs(document, directory, output, config=None):
         protected.add((ROOT / "sys_cfg" / document["ddr"]).resolve())
         protected.add((ROOT / "sys_cfg" / "nuc980" / document["ddr"]).resolve())
         protected.add((ROOT / "sys_cfg" / "nuc970" / document["ddr"]).resolve())
+        protected.add((ROOT / "sys_cfg" / "nuc990" / document["ddr"]).resolve())
     if Path(output).resolve() in protected:
         raise ValueError("Output cannot overwrite the configuration or its image/DDR inputs.")
 

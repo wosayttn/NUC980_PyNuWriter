@@ -1,8 +1,8 @@
-# NUC980 / NUC970 PyNuWriter
+# NUC980 / NUC970 / NUC990 PyNuWriter
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
 
-NUC980 與 NUC970 / N9H30 USB 燒錄與 RAM 下載工具（NUC970 另支援 MTP/OTP 金鑰燒錄與 AES 加密）。圖形介面操作請參閱 [GUI 手冊](gui/README.zh-TW.md)。
+NUC980、NUC970 / N9H30 與 NUC990 USB 燒錄與 RAM 下載工具（NUC970 另支援 MTP/OTP 金鑰燒錄與 AES 加密）。NUC990 目前沿用 NUC980 協定。圖形介面操作請參閱 [GUI 手冊](gui/README.zh-TW.md)。
 
 ## 下載獨立執行版本
 
@@ -116,8 +116,9 @@ python gui/app.py
 ## 連接板子
 
 將板子設為 USB Boot 模式，連接板子的 USB Device 埠與電腦。
-**所有燒錄、讀取、擦除、初始化與打包指令皆須明確指定 `--chip nuc980` 或 `--chip nuc970`**（不自動偵測）。
+**所有燒錄、讀取、擦除、初始化與打包指令皆須明確指定 `--chip nuc980`、`--chip nuc970` 或 `--chip nuc990`**（不自動偵測）。
 NUC980 DDR 設定位於 `sys_cfg/nuc980/`（範例使用 `NUC980DK71YC.ini`），NUC970 / N9H30 DDR 設定位於 `sys_cfg/nuc970/`（範例使用 `NUC972DF62Y.ini`）。
+NUC990 使用 `sys_cfg/nuc990/` 與 `xusb/nuc990/`，目前 DDR 設定為 `COMING_SOON.ini`；實機操作前須確認設定與韌體適用於您的板子。
 
 ```bash
 python nuwriter.py --list
@@ -129,6 +130,12 @@ python nuwriter.py --chip nuc980 -a NUC980DK71YC.ini
 
 ```bash
 python nuwriter.py --chip nuc970 -a NUC972DF62Y.ini
+```
+
+不連接板子，先驗證 NUC990 初始化設定：
+
+```bash
+python nuwriter.py --chip nuc990 -a COMING_SOON.ini --check
 ```
 
 板子重置或重新上電後須再次初始化。**初始化可能透過 CH341 重置板子。** 未使用該轉接器時，請手動重置至 USB Boot 模式。
@@ -161,11 +168,11 @@ python nuwriter.py --chip nuc980 -r spinand all backup.bin
 python nuwriter.py --chip nuc980 -e spinand all
 ```
 
-依需求替換媒體與 `--chip`。NUC980 支援 `ddr`、`nand`、`spinand`、`spinor`、`sd`/`emmc`；NUC970 支援 `ddr`、`nand`、`spinor`、`sd`/`emmc`、`mtp`（不支援 `spinand`）。位址與長度單位為 byte，十六進位數值須加 `0x`。
+依需求替換媒體與 `--chip`。NUC980 與 NUC990 支援 `ddr`、`nand`、`spinand`、`spinor`、`sd`/`emmc`；NUC970 支援 `ddr`、`nand`、`spinor`、`sd`/`emmc`、`mtp`（不支援 `spinand`）。位址與長度單位為 byte，十六進位數值須加 `0x`。
 
 | 媒體 | 寫入起點對齊 | 讀取起點對齊 | 擦除單位 |
 | --- | --- | --- | --- |
-| `nand`, `spinand` (僅 NUC980) | Flash 區塊 | Flash 區塊 | Flash 區塊 |
+| `nand`, `spinand`（SPI NAND：NUC980/NUC990） | Flash 區塊 | Flash 區塊 | Flash 區塊 |
 | `spinor` | 4 KiB | 64 KiB | 64 KiB |
 | `sd`, `emmc` | 512 bytes | 512 bytes | 不支援 |
 

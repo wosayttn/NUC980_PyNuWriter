@@ -32,11 +32,12 @@ GUI 需要桌面環境。獨立版不需安裝 Python。
 ## 連接板子
 
 1. 將板子設為 USB Boot 模式，連接 USB Device 埠與電腦。
-2. 在 **Chip** 選擇目標晶片（**NUC980** 或 **NUC970**），再選擇對應的 **DDR Init** 設定（NUC980 取自 `sys_cfg/nuc980/`，NUC970 取自 `sys_cfg/nuc970/`），並按 **Refresh** 列出裝置。
+2. 在 **Series** 選擇目標系列（**NUC980**、**NUC970** 或 **NUC990**），再從 `sys_cfg/<series>/` 選擇對應的 **DDR Init** 設定，並按 **Refresh** 列出裝置。
 3. 選擇 **USB Device**；只接一張板子時可用 **Auto**。
 4. 按 **Re-Connect**。板子重置或重新上電後須再次執行。
 
 **Re-Connect 可能透過 CH341 重置板子。** 未使用該轉接器時，請手動重置至 USB Boot 模式。
+**NUC990** 目前沿用 NUC980 操作，使用 `sys_cfg/nuc990/COMING_SOON.ini` 與 `xusb/nuc990/`；連接前請確認 DDR 設定與韌體適用於您的板子。
 切換至 **NUC970** 時，**Choose type** 會隱藏 **SPI NAND** 並顯示 **MTP** 分頁，且 Flash 與 Pack 編輯器會顯示選填的 **AES Key** 欄位（可選用 `key_cfg/nuc970/*.dat`）。**勾選 Lock MTP 將永久鎖定晶片金鑰且不可復原。**
 
 <p align="center">

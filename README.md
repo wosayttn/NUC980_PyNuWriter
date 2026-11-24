@@ -1,8 +1,8 @@
-# NUC980 / NUC970 PyNuWriter
+# NUC980 / NUC970 / NUC990 PyNuWriter
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md)
 
-USB programming and RAM download tool for NUC980 and NUC970 / N9H30 (including NUC970 MTP/OTP key programming and AES encryption). For graphical operation, see the [GUI guide](gui/README.md).
+USB programming and RAM download tool for NUC980, NUC970 / N9H30 and NUC990 (including NUC970 MTP/OTP key programming and AES encryption). NUC990 currently uses the NUC980 protocol. For graphical operation, see the [GUI guide](gui/README.md).
 
 ## Standalone Downloads
 
@@ -116,8 +116,9 @@ python gui/app.py
 ## Connect
 
 Put the board in USB Boot mode and connect its USB Device port to the PC.
-**Every attach, write, read, erase, or pack command requires an explicit `--chip nuc980` or `--chip nuc970` flag** (no auto-detection).
+**Every attach, write, read, erase, or pack command requires an explicit `--chip nuc980`, `--chip nuc970`, or `--chip nuc990` flag** (no auto-detection).
 NUC980 DDR settings live in `sys_cfg/nuc980/` (example: `NUC980DK71YC.ini`); NUC970 / N9H30 DDR settings live in `sys_cfg/nuc970/` (example: `NUC972DF62Y.ini`).
+NUC990 uses `sys_cfg/nuc990/` and `xusb/nuc990/`. The current DDR setting is `COMING_SOON.ini`; confirm its settings and firmware for your board before hardware operations.
 
 ```bash
 python nuwriter.py --list
@@ -129,6 +130,12 @@ python nuwriter.py --chip nuc980 -a NUC980DK71YC.ini
 
 ```bash
 python nuwriter.py --chip nuc970 -a NUC972DF62Y.ini
+```
+
+Validate NUC990 initialization without board access:
+
+```bash
+python nuwriter.py --chip nuc990 -a COMING_SOON.ini --check
 ```
 
 Repeat initialization after resetting or power-cycling. **Initialization may reset the board through a CH341 adapter.** Without that adapter, reset manually into USB Boot mode.
@@ -161,11 +168,11 @@ python nuwriter.py --chip nuc980 -r spinand all backup.bin
 python nuwriter.py --chip nuc980 -e spinand all
 ```
 
-Replace media and `--chip` as needed. NUC980 supports `ddr`, `nand`, `spinand`, `spinor`, `sd`/`emmc`; NUC970 supports `ddr`, `nand`, `spinor`, `sd`/`emmc`, and `mtp` (`spinand` is NUC980-only). Addresses and lengths are bytes; use `0x` for hexadecimal.
+Replace media and `--chip` as needed. NUC980 and NUC990 support `ddr`, `nand`, `spinand`, `spinor`, `sd`/`emmc`; NUC970 supports `ddr`, `nand`, `spinor`, `sd`/`emmc`, and `mtp` (no `spinand`). Addresses and lengths are bytes; use `0x` for hexadecimal.
 
 | Media | Write start | Read start | Erase unit |
 | --- | --- | --- | --- |
-| `nand`, `spinand` (NUC980 only) | Flash block | Flash block | Flash block |
+| `nand`, `spinand` (SPI NAND: NUC980/NUC990) | Flash block | Flash block | Flash block |
 | `spinor` | 4 KiB | 64 KiB | 64 KiB |
 | `sd`, `emmc` | 512 bytes | 512 bytes | Not supported |
 

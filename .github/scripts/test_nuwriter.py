@@ -2640,6 +2640,47 @@ class SessionTests(unittest.TestCase):
 
 
 class Nuc970ProtocolTests(unittest.TestCase):
+    def test_nuc990_cli_and_storage_parameters_match_nuc980(self):
+        config980 = fixture_config()
+        settings = {section: dict(config980.ini[section]) for section in config980.ini.sections()}
+        settings["RUN"]["chip"] = "nuc990"
+        settings["DDR"]["ddr"] = "COMING_SOON.ini"
+        for mode in nuwriter.NUC980_PROFILE.media:
+            with self.subTest(mode=mode):
+                config980.ini.set("RUN", "mode", mode)
+                config980.mode = mode
+                settings["RUN"]["mode"] = mode
+                if mode in {"SPINOR", "SPINAND"}:
+                    config980.ini.set(mode, "using_user_defined", "yes")
+                    settings[mode]["using_user_defined"] = "yes"
+                config990 = nuwriter.RunConfig(None, PROJECT_ROOT, settings=settings, chip="nuc990")
+                self.assertEqual(config990.user_info(), config980.user_info())
+                prepared = SimpleNamespace(image=SimpleNamespace(execute=0x8000, parameters={}), file_length=16)
+                self.assertEqual(nuwriter.loader_header(config990, prepared), nuwriter.loader_header(config980, prepared))
+        with patch.object(nuwriter, "discover_devices", side_effect=AssertionError("USB access forbidden")):
+            self.assertEqual(nuwriter.main(["--chip", "nuc990", "-a", "COMING_SOON.ini", "--check"]), 0)
+            self.assertEqual(nuwriter.main(["--chip", "nuc990", "-e", "spinand", "all", "--check"]), 0)
+        with self.assertRaises(nuwriter.NuWriterError):
+            nuwriter.load_ddr(PROJECT_ROOT / "sys_cfg" / "nuc970" / "NUC972DF62Y.ini", "nuc990")
+
+    def test_nuc990_profile_uses_nuc980_protocol_and_own_resources(self):
+        profile = nuwriter.get_chip_profile(" NUC990 ")
+        self.assertIs(profile, nuwriter.NUC990_PROFILE)
+        for name in nuwriter.ChipProfile.__dataclass_fields__:
+            if name not in {"name", "display_name", "ddr_subdir", "xusb_subdir"}:
+                with self.subTest(field=name):
+                    self.assertEqual(getattr(profile, name), getattr(nuwriter.NUC980_PROFILE, name))
+        self.assertEqual(profile.ddr_subdir, "nuc990")
+        self.assertEqual(profile.xusb_subdir, "nuc990")
+        data, xusb_name = nuwriter.load_ddr(PROJECT_ROOT / "sys_cfg" / "nuc990" / "COMING_SOON.ini", profile)
+        self.assertGreater(len(data), 0)
+        self.assertEqual(xusb_name, "xusb128.bin")
+        for filename in profile.xusb_names.values():
+            with self.subTest(xusb=filename):
+                address, payload = nuwriter.load_xusb(PROJECT_ROOT / "xusb" / "nuc990" / filename)
+                self.assertGreater(address, 0)
+                self.assertGreater(len(payload), 0)
+
     def nuc970_config(self, mode="SPINOR", operation="program", ddr="NUC972DF62Y.ini"):
         settings = {
             "RUN": {"chip": "nuc970", "mode": mode, "pack": "no", "all_device": "no"},

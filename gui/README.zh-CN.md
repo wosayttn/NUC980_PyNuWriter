@@ -32,11 +32,12 @@ GUI 需要桌面环境。独立版不需安装 Python。
 ## 连接开发板
 
 1. 将开发板设为 USB Boot 模式，连接 USB Device 接口与电脑。
-2. 在 **Chip** 选择目标芯片（**NUC980** 或 **NUC970**），再选择对应的 **DDR Init** 配置（NUC980 取自 `sys_cfg/nuc980/`，NUC970 取自 `sys_cfg/nuc970/`），按 **Refresh** 列出设备。
+2. 在 **Series** 选择目标系列（**NUC980**、**NUC970** 或 **NUC990**），再从 `sys_cfg/<series>/` 选择对应的 **DDR Init** 配置，按 **Refresh** 列出设备。
 3. 选择 **USB Device**；仅连接一块开发板时可用 **Auto**。
 4. 按 **Re-Connect**。开发板复位或重新上电后须再次执行。
 
 **Re-Connect 可能通过 CH341 复位开发板。** 未使用该适配器时，请手动复位到 USB Boot 模式。
+**NUC990** 目前沿用 NUC980 操作，使用 `sys_cfg/nuc990/COMING_SOON.ini` 与 `xusb/nuc990/`；连接前请确认 DDR 配置与固件适用于您的开发板。
 切换至 **NUC970** 时，**Choose type** 会隐藏 **SPI NAND** 并显示 **MTP** 分页，且 Flash 与 Pack 编辑器会显示可选的 **AES Key** 字段（可选用 `key_cfg/nuc970/*.dat`）。**勾选 Lock MTP 将永久锁定芯片密钥且不可恢复。**
 
 <p align="center">

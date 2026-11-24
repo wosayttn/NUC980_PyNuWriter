@@ -1,4 +1,6 @@
-"""NUC980 & NUC970/N9H30 NuWriter protocol with a MA35-style Python/CLI interface.
+"""NUC980, NUC970/N9H30 and NUC990 NuWriter with a MA35-style Python/CLI interface.
+
+NUC990 currently uses the NUC980 protocol with separate DDR and XUSB resources.
 
 Protocol reference: NUC980_NuWriter_Win and NUC970_NuWriter (PC tools and NuWriterFW).
 The C++ sources are reference material, not runtime dependencies.
@@ -17,13 +19,13 @@ import subprocess
 import sys
 import time
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
 
 USB_VENDOR_ID = 0x0416
-__version__ = "0.2.0"
+__version__ = "1.1.0"
 USB_PRODUCT_ID = 0x5963
 TRANSFER_SIZE = 4096
 ACK = 0x55AA55AA
@@ -121,7 +123,9 @@ NUC970_PROFILE = ChipProfile(
     spi_fixed_verify_chunk=True,
     supports_aes_mtp=True,
 )
-CHIP_PROFILES = {"nuc980": NUC980_PROFILE, "nuc970": NUC970_PROFILE}
+NUC990_PROFILE = replace(NUC980_PROFILE, name="nuc990", display_name="NUC990",
+                         ddr_subdir="nuc990", xusb_subdir="nuc990")
+CHIP_PROFILES = {"nuc980": NUC980_PROFILE, "nuc970": NUC970_PROFILE, "nuc990": NUC990_PROFILE}
 
 
 class NuWriterError(Exception):
@@ -130,7 +134,7 @@ class NuWriterError(Exception):
 
 def get_chip_profile(chip):
     if not isinstance(chip, str) or chip.strip().lower() not in CHIP_PROFILES:
-        raise NuWriterError(f"Unsupported chip: {chip}; expected nuc970 or nuc980")
+        raise NuWriterError(f"Unsupported chip: {chip}; expected one of {', '.join(CHIP_PROFILES)}")
     return CHIP_PROFILES[chip.strip().lower()]
 
 
@@ -305,7 +309,7 @@ class RunConfig:
             if chip is not None and declared_chip != chip.strip().lower():
                 raise NuWriterError(f"--chip {chip} conflicts with configuration chip {declared_chip}")
         if chip is None:
-            raise NuWriterError("Target chip must be specified with --chip {nuc970,nuc980}")
+            raise NuWriterError("Target chip must be specified with --chip {nuc970,nuc980,nuc990}")
         self.profile = get_chip_profile(chip)
         self.chip = self.profile.name
         self.resource_dir = Path(resource_dir) if resource_dir else Path(__file__).resolve().parent
@@ -434,7 +438,7 @@ class RunConfig:
             values["nand_user"] = int(self.yes(self.mode, "using_user_defined"))
             values["nand_block_count"] = self.number(self.mode, "blockperflash", 1024)
             values["nand_page_per_block"] = self.number(self.mode, "pageperblock", 64)
-        if self.chip == "nuc980" and self.mode in {"SPINOR", "SPINAND"}:
+        if "spi_quad" in self.profile.info_fields and self.mode in {"SPINOR", "SPINAND"}:
             prefix = "spi" if self.mode == "SPINOR" else "spinand"
             values[prefix + "_user"] = int(self.yes(self.mode, "using_user_defined"))
             for suffix, key in (("quad", "quad_read_command"), ("read_status", "read_status_command"),
@@ -483,7 +487,7 @@ def load_ddr(path, profile=NUC980_PROFILE):
         raise NuWriterError("DDR settings must contain between 1 and 4096 bytes")
     if xusb_name is None:
         if saw_other_chip:
-            other = "NUC970" if profile.name == "nuc980" else "NUC980"
+            other = "NUC970" if profile.ddr_size_reg == NUC980_PROFILE.ddr_size_reg else "NUC980"
             raise NuWriterError(f"DDR settings {path} appear to be for {other}, not {profile.display_name}")
         raise NuWriterError(f"DDR settings do not select a supported {profile.display_name} XUSB image")
     return bytes(data), xusb_name
@@ -2036,7 +2040,7 @@ def pack_output_path(config):
 
 def create_pack_file(images, output_path, media=DEV_SPINAND, ddr_ini=None, storage=None, resource_dir=None, chip=None):
     if chip is None:
-        raise NuWriterError("create_pack_file requires explicit chip='nuc970' or chip='nuc980'")
+        raise NuWriterError("create_pack_file requires explicit chip='nuc970', chip='nuc980' or chip='nuc990'")
     args = argparse.Namespace(config=None, chip=chip, attach=False, massproduct=False, device=None, option=None,
                               type=None, exec_addr=None, flash_size=None, aes_key=None,
                               mtp_option=None, mtp_mode=None, mtp_disable_encrypt=False, mtp_lock=False,
@@ -2273,7 +2277,7 @@ def _run_api(arguments, **settings):
     if set(settings) - allowed:
         raise NuWriterError(f"Unknown API settings: {', '.join(sorted(set(settings) - allowed))}")
     if settings.get("chip") is None:
-        raise NuWriterError("Explicit chip='nuc970' or chip='nuc980' is required")
+        raise NuWriterError("Explicit chip='nuc970', chip='nuc980' or chip='nuc990' is required")
     if settings.get("initialize") and "-a" not in arguments:
         arguments.append("-a")
     if settings.get("check"):
@@ -2370,9 +2374,9 @@ def main(argv=None):
                 return reset_main()
             finally:
                 sys.argv = previous
-    parser = argparse.ArgumentParser(description="NUC980 / NUC970 NuWriter Python command tool")
+    parser = argparse.ArgumentParser(description="NUC980 / NUC970 / NUC990 NuWriter Python command tool")
     parser.add_argument("config", nargs="?", help="Pack/configuration file, or DDR settings with --attach")
-    parser.add_argument("--chip", choices=("nuc970", "nuc980"),
+    parser.add_argument("--chip", choices=tuple(CHIP_PROFILES),
                         help="Target chip family (required for all operations)")
     parser.add_argument("-a", "--attach", action="store_true", help="Initialize DDR and load XUSB")
     parser.add_argument("-m", "--massproduct", action="store_true", help="Operate on all connected targets sequentially")
@@ -2418,7 +2422,7 @@ def main(argv=None):
                 or args.list or args.dtb or args.dtb_addr or args.bootargs is not None or args.aes_key
                 or args.mtp_option or args.mtp_mode or args.mtp_disable_encrypt or args.mtp_lock):
             parser.error("--version cannot be combined with operation options")
-        print(f"NUC980/NUC970 NuWriter Python {__version__}")
+        print(f"NUC980/NUC970/NUC990 NuWriter Python {__version__}")
         return 0
     if args.list and any((args.chip, args.attach, args.write, args.read, args.erase, args.pack, args.convert,
                           args.storage, args.config, args.option, args.type, args.massproduct,
@@ -2429,7 +2433,7 @@ def main(argv=None):
     if not args.list and not any((args.config, args.ddr, args.write, args.read, args.erase, args.pack, args.convert, args.storage)):
         parser.error("A configuration file is required unless --list is used")
     if not args.list and not args.chip:
-        parser.error("--chip {nuc970,nuc980} is required for all operations")
+        parser.error("--chip {nuc970,nuc980,nuc990} is required for all operations")
     try:
         if args.list:
             devices = discover_devices()

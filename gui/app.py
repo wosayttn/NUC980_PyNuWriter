@@ -1071,10 +1071,10 @@ class PackPanel(QWidget):
                 raise ValueError("Every pack image must be an object.")
             declared_chip = document.get("chip")
             if declared_chip is not None:
-                if not isinstance(declared_chip, str) or declared_chip.strip().lower() not in {"nuc970", "nuc980"}:
+                if not isinstance(declared_chip, str) or declared_chip.strip().lower() not in backend.CHIPS.values():
                     raise ValueError(f"Unsupported pack chip: {declared_chip}")
                 if declared_chip.strip().lower() != self.window.current_chip():
-                    raise ValueError(f"Pack JSON is for {declared_chip.upper()}; switch Chip to {declared_chip.upper()} first.")
+                    raise ValueError(f"Pack JSON is for {declared_chip.upper()}; switch Series to {declared_chip.upper()} first.")
             mode = str(document.get("mode", document.get("media", backend.MEDIA[self.media.itemText(0)]))).lower()
             selected = next((name for name, value in backend.MEDIA.items() if value == mode), None)
             if mode == "emmc":
@@ -1390,23 +1390,23 @@ class MainWindow(QMainWindow):
         controls_layout = QVBoxLayout(self.controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         target_row = QHBoxLayout()
-        target_row.addWidget(QLabel("Chip:"))
+        target_row.addWidget(QLabel("Series:"))
         self.chip = QComboBox()
-        self.chip.addItems(list(backend.CHIPS))
+        self.chip.addItems(sorted(backend.CHIPS))
         self.chip.setCurrentText("NUC980")
         target_row.addWidget(self.chip)
-        self.chip_ddr = {"nuc980": "NUC980DK71YC.ini", "nuc970": "NUC972DF62Y.ini"}
+        self.chip_ddr = dict(backend.CHIP_DDR_DEFAULTS)
         self.active_chip = "nuc980"
-        target_row.addWidget(QLabel("Choose type:"))
         self.media = QComboBox()
         self.media.addItems(backend.CHIP_MEDIA["nuc980"])
         self.media.setCurrentText("SDRAM")
         self.media.setFixedWidth((self.media.sizeHint().width() * 5 + 3) // 4)
-        target_row.addWidget(self.media)
         target_row.addWidget(QLabel("DDR Init:"))
         self.ddr = QComboBox()
         self.populate_ddr("nuc980", str(self.settings.value("ddr", "NUC980DK71YC.ini")))
         target_row.addWidget(self.ddr, 1)
+        target_row.addWidget(QLabel("Choose Type:"))
+        target_row.addWidget(self.media)
         self.reconnect_button = button("Re-Connect", QStyle.StandardPixmap.SP_BrowserReload, self.attach)
         target_row.addWidget(self.reconnect_button)
         device_row = QHBoxLayout()
@@ -1481,7 +1481,7 @@ class MainWindow(QMainWindow):
         if directory.is_dir():
             for path in sorted(directory.glob("*.ini")):
                 self.ddr.addItem(path.name, (prefix / path.name).as_posix())
-        default_name = "NUC972DF62Y.ini" if chip == "nuc970" else "NUC980DK71YC.ini"
+        default_name = backend.CHIP_DDR_DEFAULTS[chip]
         index = self.ddr.findText(preferred) if preferred else -1
         if index < 0:
             index = self.ddr.findText(default_name)
@@ -1513,7 +1513,7 @@ class MainWindow(QMainWindow):
     def restore_settings(self):
         saved_chip_ddr = self.settings.value("chip_ddr", {})
         if isinstance(saved_chip_ddr, dict):
-            for key in ("nuc980", "nuc970"):
+            for key in backend.CHIPS.values():
                 if isinstance(saved_chip_ddr.get(key), str) and saved_chip_ddr[key]:
                     self.chip_ddr[key] = saved_chip_ddr[key]
         main = self.settings.value("main", {})
@@ -1614,6 +1614,9 @@ class MainWindow(QMainWindow):
 
     def moveEvent(self, event):
         super().moveEvent(event)
+        if getattr(self, "console_window", None) is not None and self.console_window.isVisible():
+            if self.console_window.frameGeometry().intersects(self.frameGeometry()):
+                QTimer.singleShot(0, self.align_console_window)
         if hasattr(self, "log_window") and self.log_window.isVisible():
             self.align_log_window()
         if getattr(self, "trace_window", None) is not None and self.trace_window.isVisible():
@@ -1621,6 +1624,9 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if getattr(self, "console_window", None) is not None and self.console_window.isVisible():
+            if self.console_window.frameGeometry().intersects(self.frameGeometry()):
+                QTimer.singleShot(0, self.align_console_window)
         if hasattr(self, "log_window") and self.log_window.isVisible():
             self.align_log_window()
         if getattr(self, "trace_window", None) is not None and self.trace_window.isVisible():
@@ -1629,19 +1635,54 @@ class MainWindow(QMainWindow):
     def align_log_window(self):
         frame = self.frameGeometry()
         border_width = max(0, self.log_window.frameGeometry().width() - self.log_window.width())
-        self.log_window.setFixedWidth(max(1, frame.width() - border_width))
-        self.log_window.move(frame.left(), frame.bottom() + 1)
+        self.log_window.setMinimumWidth(420)
+        self.log_window.setMaximumWidth(16777215)
+        self.log_window.resize(max(420, frame.width() - border_width), self.log_window.height())
+        self.align_popup(self.log_window, below=True)
+        self.log_window.setFixedWidth(self.log_window.width())
+
+    def align_popup(self, popup, below=False):
+        frame = self.frameGeometry()
+        available = self.screen().availableGeometry()
+        popup_frame = popup.frameGeometry()
+        border_width = max(0, popup_frame.width() - popup.width())
+        border_height = max(0, popup_frame.height() - popup.height())
+        minimum = popup.minimumSize().expandedTo(popup.minimumSizeHint())
+        regions = {
+            "right": QRect(frame.right() + 1, available.top(),
+                           max(0, available.right() - frame.right()), available.height()),
+            "left": QRect(available.left(), available.top(),
+                          max(0, frame.left() - available.left()), available.height()),
+            "below": QRect(available.left(), frame.bottom() + 1,
+                           available.width(), max(0, available.bottom() - frame.bottom())),
+            "above": QRect(available.left(), available.top(),
+                           available.width(), max(0, frame.top() - available.top())),
+        }
+        order = ("below", "above", "right", "left") if below else ("right", "left", "below", "above")
+        for shrink in (False, True):
+            for side in order:
+                region = regions[side].intersected(available)
+                width = min(popup_frame.width(), region.width()) if shrink else popup_frame.width()
+                height = min(popup_frame.height(), region.height()) if shrink else popup_frame.height()
+                if (width > region.width() or height > region.height()
+                        or width < minimum.width() + border_width
+                        or height < minimum.height() + border_height):
+                    continue
+                left = max(region.left(), min(frame.left(), region.right() - width + 1))
+                top = max(region.top(), min(frame.top(), region.bottom() - height + 1))
+                if side == "left":
+                    left = region.right() - width + 1
+                elif side == "above":
+                    top = region.bottom() - height + 1
+                popup.resize(width - border_width, height - border_height)
+                popup.move(left, top)
+                return
+        popup.move(frame.right() + 1, frame.top())
 
     def align_popup_right(self, popup):
         if popup is None or not popup.isVisible():
             return
-        frame = self.frameGeometry()
-        destination = QRect(frame.right() + 1, frame.top(),
-                            popup.frameGeometry().width(), popup.frameGeometry().height())
-        available = self.screen().availableGeometry()
-        destination.moveLeft(max(available.left(), min(destination.left(), available.right() - destination.width() + 1)))
-        destination.moveTop(max(available.top(), min(destination.top(), available.bottom() - destination.height() + 1)))
-        popup.move(destination.topLeft())
+        self.align_popup(popup)
 
     def align_console_window(self):
         self.align_popup_right(self.console_window)
@@ -1675,11 +1716,11 @@ class MainWindow(QMainWindow):
                 restored = popup.restoreGeometry(QByteArray(bytes.fromhex(self.console_geometry)))
             except ValueError:
                 pass
-        if popup.isMinimized():
+        if popup.isMinimized() or popup.isMaximized():
             popup.showNormal()
         else:
             popup.show()
-        if first_show and not restored:
+        if (first_show and not restored) or popup.frameGeometry().intersects(self.frameGeometry()):
             self.align_console_window()
             QTimer.singleShot(0, self.align_console_window)
         popup.raise_()
